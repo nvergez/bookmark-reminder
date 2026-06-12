@@ -1,0 +1,22 @@
+# Secrets — ne JAMAIS commiter
+.env
+.dev.vars
+tokens.json
+# tmp orphelins de l'écriture atomique (tokens.json.tmp-<pid> contient les tokens)
+*.tmp-*
+
+# État et logs locaux
+state.json
+logs/
+
+# Dépendances et build
+node_modules/
+dist/
+.wrangler/
+
+# Outillage local
+.claude/
+.DS_Store
+
+# Doc de spike interne, non publiée
+RAPPORT.md

@@ -1,0 +1,27 @@
+{
+  "name": "bookmark-reminder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bot de rappel quotidien des bookmarks & likes X → Telegram (local ou Cloudflare Workers)",
+  "author": "Nicolas Vergez",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "digest": "node src/digest.ts",
+    "auth": "node src/auth.ts",
+    "typecheck": "tsc --noEmit && tsc -p worker",
+    "test": "node --test \"tests/*.test.ts\"",
+    "worker:dev": "wrangler dev --test-scheduled",
+    "worker:deploy": "wrangler deploy",
+    "worker:tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4",
+    "@types/node": "^22",
+    "typescript": "^5.8.0",
+    "wrangler": "^4"
+  }
+}
