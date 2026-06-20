@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Wrapper lancé par launchd : résout node AU MOMENT DU RUN.
-# Pourquoi : un chemin node figé dans le plist (typiquement
-# ~/.nvm/versions/node/vX.Y.Z/bin/node) disparaît au premier
-# nvm install/uninstall ; launchd ne peut alors plus spawner le process, donc
-# l'alerte Telegram (qui vit DANS le process) ne part jamais. Ce wrapper, lui,
-# est un chemin stable du repo.
+# Wrapper launched by launchd: resolves node AT RUN TIME.
+# Why: a node path hardcoded in the plist (typically
+# ~/.nvm/versions/node/vX.Y.Z/bin/node) disappears on the first
+# nvm install/uninstall; launchd can then no longer spawn the process, so
+# the Telegram alert (which lives INSIDE the process) never goes out. This wrapper,
+# on the other hand, is a stable repo path.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
-# launchd démarre avec un PATH minimal (/usr/bin:/bin) : charger nvm si
-# présent (suit l'alias default courant), puis compléter avec les
-# emplacements usuels (homebrew Apple Silicon / Intel).
+# launchd starts with a minimal PATH (/usr/bin:/bin): load nvm if
+# present (follows the current default alias), then complete with the
+# usual locations (homebrew Apple Silicon / Intel).
 if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
   # shellcheck source=/dev/null
   . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true
@@ -21,15 +21,15 @@ PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 export PATH
 
 if ! command -v node >/dev/null 2>&1; then
-  echo "Erreur : node introuvable au moment du run (PATH : $PATH)." >&2
-  echo "Installer Node >= 22.18 (nvm ou homebrew) puis relancer ./scripts/install-launchd.sh." >&2
+  echo "Error: node not found at run time (PATH: $PATH)." >&2
+  echo "Install Node >= 22.18 (nvm or homebrew) then re-run ./scripts/install-launchd.sh." >&2
   exit 1
 fi
 
-# Node >= 22.18 requis (type stripping natif, engines de package.json) :
-# un node plus ancien ferait échouer le strip-types de src/digest.ts.
+# Node >= 22.18 required (native type stripping, package.json engines):
+# an older node would make the strip-types of src/digest.ts fail.
 if ! node -e 'const [a = 0, b = 0] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 18) ? 0 : 1)'; then
-  echo "Erreur : node $(node -v) trop ancien — Node >= 22.18 requis (package.json engines)." >&2
+  echo "Error: node $(node -v) too old — Node >= 22.18 required (package.json engines)." >&2
   exit 1
 fi
 

@@ -1,8 +1,8 @@
-// Worker Cloudflare (PLAN.md E6, SPIKE-HOSTING.md §3-§4) : cron quotidien +
-// routes d'auth OAuth hébergées. Le run ENTIER s'exécute dans le Durable
-// Object : ses output gates retiennent tout message réseau sortant tant que
-// la rotation du refresh token (storage.put) n'est pas flushée sur disque —
-// l'équivalent cloud de l'écriture atomique locale (fsUtil.ts).
+// Cloudflare Worker (PLAN.md E6, SPIKE-HOSTING.md §3-§4): daily cron +
+// hosted OAuth auth routes. The ENTIRE run executes inside the Durable
+// Object: its output gates hold back any outgoing network message until
+// the refresh token rotation (storage.put) is flushed to disk —
+// the cloud equivalent of the local atomic write (fsUtil.ts).
 
 import { DurableObject } from 'cloudflare:workers';
 import { parseMaxResults } from '../src/maxResults.ts';
@@ -28,18 +28,18 @@ export interface Env {
   X_CLIENT_SECRET?: string;
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_CHAT_ID: string;
-  /** Secret d'accès aux routes /auth, /run et /admin/*
-   * (?k=… ou en-tête Authorization: Bearer). */
+  /** Access secret for the /auth, /run and /admin/* routes
+   * (?k=… or Authorization: Bearer header). */
   AUTH_URL_KEY: string;
   // Vars (wrangler.jsonc)
-  /** URL publique du Worker, pour le lien de re-auth dans les alertes. */
+  /** Public URL of the Worker, for the re-auth link in alerts. */
   BASE_URL?: string;
-  /** Heure locale Europe/Paris du digest (défaut 08:30) — garde du double-cron. */
+  /** Europe/Paris local time of the digest (default 08:30) — guard for the double-cron. */
   DIGEST_PARIS_TIME?: string;
   MAX_RESULTS?: string;
   TWEET_LINK_DOMAIN?: string;
-  /** « on » pendant la bascule local→cloud uniquement (import/export des
-   * tokens) ; repasser à « off » + redéployer une fois la bascule faite. */
+  /** "on" during the local→cloud switchover only (token import/export);
+   * switch back to "off" + redeploy once the switchover is done. */
   ADMIN_API?: string;
 }
 
@@ -59,12 +59,12 @@ function buildConfig(env: Env): Config {
   ).filter((name) => !env[name]);
   if (missing.length > 0) {
     throw new Error(
-      `Secrets manquants sur le Worker : ${missing.join(', ')} — \`wrangler secret put <NOM>\``,
+      `Missing secrets on the Worker: ${missing.join(', ')} — \`wrangler secret put <NAME>\``,
     );
   }
   const reauthHint = env.BASE_URL
-    ? `ré-autorise ici : ${env.BASE_URL}/auth?k=${env.AUTH_URL_KEY}`
-    : 'ouvre https://<worker>/auth?k=<AUTH_URL_KEY> pour ré-autoriser';
+    ? `re-authorize here: ${env.BASE_URL}/auth?k=${env.AUTH_URL_KEY}`
+    : 'open https://<worker>/auth?k=<AUTH_URL_KEY> to re-authorize';
   return {
     xClientId: env.X_CLIENT_ID,
     xClientSecret: env.X_CLIENT_SECRET || null,
@@ -76,7 +76,7 @@ function buildConfig(env: Env): Config {
   };
 }
 
-/** Comparaison en temps constant du secret d'URL (pas de node:crypto ici). */
+/** Constant-time comparison of the URL secret (no node:crypto here). */
 function safeEqual(a: string, b: string): boolean {
   if (a.length !== b.length || a.length === 0) return false;
   let diff = 0;
@@ -85,15 +85,15 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 export class BotDO extends DurableObject<Env> {
-  // Adaptateur Storage au-dessus du stockage SQLite du DO. Les valeurs sont
-  // des objets structurés (pas de JSON.stringify) ; la validation de forme
-  // reste là pour attraper une corruption ou un import raté.
+  // Storage adapter on top of the DO's SQLite storage. The values are
+  // structured objects (no JSON.stringify); shape validation stays here
+  // to catch corruption or a failed import.
   private readonly botStorage: Storage = {
     getTokens: async (): Promise<Tokens | null> => {
       const value = await this.ctx.storage.get('tokens');
       if (value === undefined) return null;
       if (!isValidTokens(value)) {
-        throw new Error('Tokens du Durable Object invalides — refais un import ou une auth');
+        throw new Error('Invalid Durable Object tokens — redo an import or an auth');
       }
       return value;
     },
@@ -110,13 +110,13 @@ export class BotDO extends DurableObject<Env> {
     },
   };
 
-  /** Promesse du run en vol. Les input gates du DO ne couvrent pas les
-   * `await fetch()` : sans ce garde, un /run concurrent du cron pourrait
-   * consommer deux fois le même refresh token X (à usage unique). */
+  /** In-flight run promise. The DO's input gates do not cover
+   * `await fetch()`: without this guard, a /run concurrent with the cron
+   * could consume the same (single-use) X refresh token twice. */
   private running: Promise<{ ok: boolean; detail: string }> | null = null;
 
-  /** Run quotidien complet. Ne throw jamais : l'échec part en alerte Telegram
-   * (best-effort) et remonte en { ok: false } pour les logs. */
+  /** Full daily run. Never throws: the failure goes out as a Telegram alert
+   * (best-effort) and surfaces as { ok: false } for the logs. */
   async runDigestSafe(): Promise<{ ok: boolean; detail: string }> {
     this.running ??= this.runDigestOnce().finally(() => {
       this.running = null;
@@ -140,7 +140,7 @@ export class BotDO extends DurableObject<Env> {
     }
   }
 
-  /** Démarre un flow PKCE : persiste verifier/state, retourne l'URL X. */
+  /** Starts a PKCE flow: persists verifier/state, returns the X URL. */
   async beginAuth(redirectUri: string): Promise<string> {
     const config = buildConfig(this.env);
     const pending: PendingAuth = {
@@ -154,51 +154,51 @@ export class BotDO extends DurableObject<Env> {
     return buildAuthorizeUrl(config.xClientId, pending.state, challenge, redirectUri);
   }
 
-  /** Termine le flow : vérifie le state (one-shot), échange le code, et
-   * refuse un compte X différent de celui déjà connu (SPIKE §3.3). */
+  /** Completes the flow: verifies the state (one-shot), exchanges the code, and
+   * rejects an X account different from the one already known (SPIKE §3.3). */
   async completeAuth(code: string, state: string): Promise<string> {
     const config = buildConfig(this.env);
     const pending = (await this.ctx.storage.get('pendingAuth')) as PendingAuth | undefined;
     if (!pending || Date.now() - pending.createdAt > PENDING_AUTH_TTL_MS) {
       await this.ctx.storage.delete('pendingAuth');
-      throw new Error('Aucun flow d’auth en attente (ou expiré) — repasse par /auth');
+      throw new Error('No auth flow pending (or expired) — go through /auth again');
     }
     if (!safeEqual(state, pending.state)) {
-      // pendingAuth NON consommé : /callback est public, un state forgé ne
-      // doit pas pouvoir annuler le flow légitime en cours.
-      throw new Error('Paramètre state invalide (possible CSRF) — flow abandonné');
+      // pendingAuth NOT consumed: /callback is public, a forged state must
+      // not be able to cancel the legitimate flow in progress.
+      throw new Error('Invalid state parameter (possible CSRF) — flow aborted');
     }
-    // One-shot : consommé dès que le state correspond (un state ne se rejoue pas).
+    // One-shot: consumed as soon as the state matches (a state cannot be replayed).
     await this.ctx.storage.delete('pendingAuth');
 
     const tokens = await exchangeCode(config, code, pending.verifier, pending.redirectUri);
     const existing = await this.botStorage.getTokens().catch(() => null);
     if (existing && existing.userId !== tokens.userId) {
       throw new Error(
-        `Compte X inattendu (@${tokens.username ?? tokens.userId}) — seuls les tokens du compte d’origine sont acceptés`,
+        `Unexpected X account (@${tokens.username ?? tokens.userId}) — only the tokens of the original account are accepted`,
       );
     }
     await this.botStorage.putTokens(tokens);
     return tokens.username ?? tokens.userId;
   }
 
-  /** Seed de la bascule local→cloud (SPIKE §3.4) : tokens ET state. */
+  /** Seed for the local→cloud switchover (SPIKE §3.4): tokens AND state. */
   async importData(payload: { tokens?: unknown; state?: unknown }): Promise<string> {
     if (!isValidTokens(payload.tokens)) {
-      throw new Error('Import refusé : champ "tokens" absent ou de forme invalide');
+      throw new Error('Import rejected: "tokens" field absent or of invalid shape');
     }
     if (payload.state === undefined) {
       throw new Error(
-        'Import refusé : champ "state" manquant — sans lui le premier run cloud ré-établit la référence en silence (SPIKE-HOSTING.md §3.4)',
+        'Import rejected: "state" field missing — without it the first cloud run silently re-establishes the baseline (SPIKE-HOSTING.md §3.4)',
       );
     }
     const state = validateStateShape(payload.state, 'import');
     await this.ctx.storage.put('tokens', payload.tokens);
     await this.ctx.storage.put('state', state);
-    return `import OK : tokens (@${payload.tokens.username ?? payload.tokens.userId}) + state (${state.bookmarkIds.length} bookmarks, ${state.likeIds.length} likes suivis)`;
+    return `import OK: tokens (@${payload.tokens.username ?? payload.tokens.userId}) + state (${state.bookmarkIds.length} bookmarks, ${state.likeIds.length} likes tracked)`;
   }
 
-  /** Export symétrique, pour le rollback cloud→local (SPIKE §3.4 étape 5). */
+  /** Symmetric export, for the cloud→local rollback (SPIKE §3.4 step 5). */
   async exportData(): Promise<{ tokens: Tokens | null; state: BotState | null }> {
     return {
       tokens: ((await this.ctx.storage.get('tokens')) as Tokens | undefined) ?? null,
@@ -208,10 +208,10 @@ export class BotDO extends DurableObject<Env> {
 }
 
 function htmlPage(title: string, detail: string): Response {
-  // title/detail peuvent porter des données externes (paramètre `error` du
-  // callback OAuth, messages d'exception) : tout est échappé, CSP en défense
-  // en profondeur.
-  const body = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head>
+  // title/detail can carry external data (`error` parameter from the OAuth
+  // callback, exception messages): everything is escaped, with CSP as
+  // defense in depth.
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head>
 <body style="font-family: system-ui; max-width: 32rem; margin: 4rem auto;">
 <h1>${escapeHtml(title)}</h1><p>${escapeHtml(detail)}</p></body></html>`;
   return new Response(body, {
@@ -223,12 +223,12 @@ function htmlPage(title: string, detail: string): Response {
 }
 
 function notFound(): Response {
-  return new Response('Introuvable', { status: 404 });
+  return new Response('Not found', { status: 404 });
 }
 
-/** Clé acceptée en en-tête Authorization (préféré : pas de secret dans les
- * URLs, que les invocation logs capturent) ou en ?k= (nécessaire au lien
- * /auth cliquable depuis une alerte Telegram). */
+/** Key accepted in the Authorization header (preferred: no secret in the
+ * URLs, which the invocation logs capture) or in ?k= (required for the
+ * /auth link to be clickable from a Telegram alert). */
 function hasValidKey(request: Request, url: URL, env: Env): boolean {
   const header = request.headers.get('Authorization') ?? '';
   const provided = header.startsWith('Bearer ')
@@ -237,15 +237,15 @@ function hasValidKey(request: Request, url: URL, env: Env): boolean {
   return safeEqual(provided, env.AUTH_URL_KEY ?? '');
 }
 
-/** Les erreurs d'auth embarquent le lien de re-auth complet (?k=<secret>) à
- * destination de l'alerte Telegram ; les logs Workers (persistés quand
- * observability est activée) ne doivent jamais contenir la clé. */
+/** Auth errors embed the full re-auth link (?k=<secret>) intended for the
+ * Telegram alert; the Workers logs (persisted when observability is
+ * enabled) must never contain the key. */
 function redactKey(detail: string, env: Env): string {
   return env.AUTH_URL_KEY ? detail.replaceAll(env.AUTH_URL_KEY, '<AUTH_URL_KEY>') : detail;
 }
 
 function botStub(env: Env): DurableObjectStub<BotDO> {
-  // Un singleton : toutes les requêtes et tous les crons parlent au même DO.
+  // A singleton: all requests and all crons talk to the same DO.
   return env.BOT_DO.get(env.BOT_DO.idFromName('bot'));
 }
 
@@ -253,16 +253,16 @@ export default {
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     const target = env.DIGEST_PARIS_TIME || '08:30';
     if (!isLocalTime(controller.scheduledTime, target, PARIS_TZ)) {
-      // L'autre branche du double-cron UTC : à ignorer (SPIKE §4).
-      console.log(`Cron ${controller.cron} ignoré (pas ${target} ${PARIS_TZ})`);
+      // The other branch of the UTC double-cron: to be ignored (SPIKE §4).
+      console.log(`Cron ${controller.cron} ignored (not ${target} ${PARIS_TZ})`);
       return;
     }
     const result = await botStub(env).runDigestSafe();
     if (result.ok) {
       console.log(`Digest OK — ${result.detail}`);
     } else {
-      // L'alerte Telegram est déjà partie (best-effort) ; le log reste pour wrangler tail.
-      console.error(`Échec du run digest : ${redactKey(result.detail, env)}`);
+      // The Telegram alert has already gone out (best-effort); the log stays for wrangler tail.
+      console.error(`Digest run failed: ${redactKey(result.detail, env)}`);
     }
   },
 
@@ -278,30 +278,30 @@ export default {
       }
 
       case '/callback': {
-        // Pas de ?k ici (X redirige sans) : la protection est le state one-shot.
+        // No ?k here (X redirects without it): the protection is the one-shot state.
         if (request.method !== 'GET') return notFound();
         const oauthError = url.searchParams.get('error');
         if (oauthError) {
-          return htmlPage('Autorisation refusée', `X a renvoyé : ${oauthError}`);
+          return htmlPage('Authorization denied', `X returned: ${oauthError}`);
         }
         const code = url.searchParams.get('code');
         const state = url.searchParams.get('state');
         if (!code || !state) {
-          return htmlPage('Callback invalide', 'Paramètres code/state manquants.');
+          return htmlPage('Invalid callback', 'Missing code/state parameters.');
         }
         try {
           const username = await botStub(env).completeAuth(code, state);
-          return htmlPage('Autorisation réussie ✅', `Le bot est ré-autorisé pour @${username}. Tu peux fermer cet onglet.`);
+          return htmlPage('Authorization successful ✅', `The bot is re-authorized for @${username}. You can close this tab.`);
         } catch (err) {
-          // Message d'erreur sans aucune donnée sensible (jamais de token).
-          return htmlPage('Échec de l’autorisation ❌', err instanceof Error ? err.message : 'Erreur inconnue.');
+          // Error message without any sensitive data (never a token).
+          return htmlPage('Authorization failed ❌', err instanceof Error ? err.message : 'Unknown error.');
         }
       }
 
       case '/run': {
         if (request.method !== 'GET' || !hasValidKey(request, url, env)) return notFound();
         const result = await botStub(env).runDigestSafe();
-        return new Response(`${result.ok ? 'OK' : 'ÉCHEC'} — ${result.detail}\n`, {
+        return new Response(`${result.ok ? 'OK' : 'FAILED'} — ${result.detail}\n`, {
           status: result.ok ? 200 : 500,
         });
       }
@@ -314,13 +314,13 @@ export default {
         try {
           payload = (await request.json()) as { tokens?: unknown; state?: unknown };
         } catch {
-          return new Response('Corps JSON invalide\n', { status: 400 });
+          return new Response('Invalid JSON body\n', { status: 400 });
         }
         try {
           const detail = await botStub(env).importData(payload);
           return new Response(`${detail}\n`);
         } catch (err) {
-          return new Response(`${err instanceof Error ? err.message : 'Import refusé'}\n`, {
+          return new Response(`${err instanceof Error ? err.message : 'Import rejected'}\n`, {
             status: 400,
           });
         }

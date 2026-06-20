@@ -1,9 +1,9 @@
-// Diff d'IDs et validation du state — logique pure, aucun import node:* :
-// la persistance vit derrière l'abstraction Storage (fsStorage.ts / Worker).
+// ID diff and state validation — pure logic, no node:* imports:
+// persistence lives behind the Storage abstraction (fsStorage.ts / Worker).
 
 import type { BotState, DigestDiff, FetchResult, Tweet } from './types.ts';
 
-/** Plafond d'IDs conservés par liste (PLAN.md E3). */
+/** Cap on IDs retained per list (PLAN.md E3). */
 export const STATE_MAX_IDS = 2000;
 
 function isStringArray(value: unknown): value is string[] {
@@ -11,23 +11,23 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 /**
- * Valide la forme d'un state persisté (fichier local ou Durable Object).
- * Forme invalide → throw : le digest doit ALERTER, pas repartir de zéro en
- * silence (un state perdu = re-digest de tout l'historique récent).
- * `source` contextualise le message (chemin du fichier, « Durable Object »…).
+ * Validates the shape of a persisted state (local file or Durable Object).
+ * Invalid shape → throw: the digest must ALERT, not silently start from
+ * scratch (a lost state = re-digesting all the recent history).
+ * `source` adds context to the message (file path, "Durable Object"...).
  */
 export function validateStateShape(parsed: unknown, source: string): BotState {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`state invalide (objet attendu) : ${source}`);
+    throw new Error(`invalid state (object expected): ${source}`);
   }
   const obj = parsed as Record<string, unknown>;
   if (!isStringArray(obj.bookmarkIds) || !isStringArray(obj.likeIds)) {
     throw new Error(
-      `state invalide (bookmarkIds/likeIds doivent être des tableaux de chaînes) : ${source}`,
+      `invalid state (bookmarkIds/likeIds must be arrays of strings): ${source}`,
     );
   }
   if (obj.lastRunAt !== null && typeof obj.lastRunAt !== 'string') {
-    throw new Error(`state invalide (lastRunAt doit être une chaîne ou null) : ${source}`);
+    throw new Error(`invalid state (lastRunAt must be a string or null): ${source}`);
   }
 
   return {
@@ -38,10 +38,10 @@ export function validateStateShape(parsed: unknown, source: string): BotState {
 }
 
 /**
- * Diff d'une liste : nouveaux tweets (ordre API préservé, plus récents en
- * premier) + prochaine liste d'IDs. On garde les anciens IDs non re-vus car
- * un tweet peut sortir de la fenêtre max_results tout en restant bookmarké :
- * le re-voir plus tard ne doit PAS le re-signaler.
+ * Diff of one list: new tweets (API order preserved, most recent first) +
+ * the next list of IDs. We keep the old IDs that weren't seen again because
+ * a tweet can drop out of the max_results window while still being bookmarked:
+ * seeing it again later must NOT re-flag it.
  */
 function diffList(
   previousIds: string[],
@@ -69,9 +69,9 @@ function diffList(
 }
 
 /**
- * PUR. previous === null → premier run : on établit la référence sans
- * signaler de nouveautés (PLAN.md §6). Bookmarks et likes sont diffés
- * indépendamment.
+ * PURE. previous === null → first run: we establish the baseline without
+ * flagging any new items (PLAN.md §6). Bookmarks and likes are diffed
+ * independently.
  */
 export function computeDiff(
   previous: BotState | null,

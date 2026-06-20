@@ -1,16 +1,16 @@
 import type { BotState, Tokens } from './types.ts';
 
 /**
- * Abstraction de persistance (SPIKE-HOSTING.md §4) : deux implémentations,
- * FsStorage (local, fsUtil atomique) et le Durable Object côté Worker (output
- * gates). Contrat commun : putTokens DOIT être durablement persisté quand la
- * promesse se résout — le refresh token X est à usage unique.
+ * Persistence abstraction (SPIKE-HOSTING.md §4): two implementations,
+ * FsStorage (local, atomic fsUtil) and the Durable Object on the Worker side (output
+ * gates). Common contract: putTokens MUST be durably persisted when the
+ * promise resolves — the X refresh token is single-use.
  */
 export interface Storage {
-  /** null si aucun token enregistré ; throw si présent mais invalide. */
+  /** null if no token is stored; throw if present but invalid. */
   getTokens(): Promise<Tokens | null>;
   putTokens(tokens: Tokens): Promise<void>;
-  /** null si premier run ; throw si présent mais invalide (alerter, pas réinitialiser). */
+  /** null on first run; throw if present but invalid (alert, don't reset). */
   getState(): Promise<BotState | null>;
   putState(state: BotState): Promise<void>;
 }

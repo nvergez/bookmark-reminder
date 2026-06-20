@@ -1,6 +1,6 @@
-// Briques OAuth 2.0 + PKCE (RFC 7636) partagées entre le CLI local (auth.ts)
-// et le Worker Cloudflare : WebCrypto et fetch uniquement, aucun import
-// node:* — le même code tourne dans les deux runtimes.
+// OAuth 2.0 + PKCE (RFC 7636) building blocks shared between the local CLI (auth.ts)
+// and the Cloudflare Worker: WebCrypto and fetch only, no node:* imports
+// — the same code runs in both runtimes.
 
 import { TOKEN_URL, buildTokenRequest, parseTokenResponse } from './tokens.ts';
 import type { Config, Tokens } from './types.ts';
@@ -14,23 +14,23 @@ export function base64url(bytes: Uint8Array): string {
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 
-/** code_verifier RFC 7636 : 48 octets aléatoires → 64 caractères base64url
- * (dans la fenêtre 43-128, alphabet entièrement « unreserved »). */
+/** code_verifier RFC 7636: 48 random bytes → 64 base64url characters
+ * (within the 43-128 window, fully "unreserved" alphabet). */
 export function generateCodeVerifier(byteLength: number = 48): string {
   const bytes = new Uint8Array(byteLength);
   crypto.getRandomValues(bytes);
   return base64url(bytes);
 }
 
-/** Paramètre state anti-CSRF : 24 octets aléatoires en base64url. */
+/** Anti-CSRF state parameter: 24 random bytes in base64url. */
 export function randomStateParam(): string {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
   return base64url(bytes);
 }
 
-/** code_challenge S256 : base64url(sha256(ascii(verifier))), sans padding.
- * Async car WebCrypto (seule API de hash commune Node/Workers). */
+/** code_challenge S256: base64url(sha256(ascii(verifier))), without padding.
+ * Async because of WebCrypto (the only hash API common to Node/Workers). */
 export async function codeChallengeS256(verifier: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
   return base64url(new Uint8Array(digest));
@@ -59,23 +59,23 @@ export async function fetchMe(accessToken: string): Promise<{ id: string; userna
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`GET /2/users/me a échoué (HTTP ${response.status}) : ${text.slice(0, 300)}`);
+    throw new Error(`GET /2/users/me failed (HTTP ${response.status}): ${text.slice(0, 300)}`);
   }
   let payload: unknown;
   try {
     payload = JSON.parse(text);
   } catch {
-    throw new Error(`Réponse /2/users/me illisible : ${text.slice(0, 300)}`);
+    throw new Error(`Unreadable /2/users/me response: ${text.slice(0, 300)}`);
   }
   const data = (payload as { data?: { id?: unknown; username?: unknown } }).data;
   if (typeof data?.id !== 'string' || typeof data.username !== 'string') {
-    throw new Error('Réponse /2/users/me inattendue : id ou username manquant');
+    throw new Error('Unexpected /2/users/me response: id or username missing');
   }
   return { id: data.id, username: data.username };
 }
 
-/** Échange du code d'autorisation, puis résolution de l'identité (/2/users/me)
- * — faite une seule fois ici : le digest quotidien ne paie jamais ce call. */
+/** Exchanges the authorization code, then resolves the identity (/2/users/me)
+ * — done only once here: the daily digest never pays for this call. */
 export async function exchangeCode(
   config: Pick<Config, 'xClientId' | 'xClientSecret'>,
   code: string,
@@ -91,13 +91,13 @@ export async function exchangeCode(
   const response = await fetch(TOKEN_URL, { method: 'POST', headers, body });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`Échange du code OAuth refusé (HTTP ${response.status}) : ${text.slice(0, 300)}`);
+    throw new Error(`OAuth code exchange refused (HTTP ${response.status}): ${text.slice(0, 300)}`);
   }
   let payload: unknown;
   try {
     payload = JSON.parse(text);
   } catch {
-    throw new Error(`Réponse token illisible : ${text.slice(0, 300)}`);
+    throw new Error(`Unreadable token response: ${text.slice(0, 300)}`);
   }
   const parsed = parseTokenResponse(payload, Date.now());
   const me = await fetchMe(parsed.accessToken);

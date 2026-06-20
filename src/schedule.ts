@@ -1,8 +1,8 @@
 /**
- * Garde du double-cron UTC (SPIKE-HOSTING.md §4) : les Cron Triggers
- * Cloudflare ne connaissent que l'UTC, donc deux triggers encadrent le
- * changement d'heure (30 6 * * * et 30 7 * * *) et seul celui qui tombe à
- * l'heure locale cible doit déclencher le digest.
+ * UTC double-cron guard (SPIKE-HOSTING.md §4): Cloudflare Cron Triggers
+ * only understand UTC, so two triggers bracket the DST change
+ * (30 6 * * * and 30 7 * * *) and only the one that lands at the target
+ * local time should fire the digest.
  */
 export function isLocalTime(epochMs: number, hhmm: string, timeZone: string): boolean {
   const formatted = new Intl.DateTimeFormat('en-GB', {

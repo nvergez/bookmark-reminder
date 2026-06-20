@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { decodeApiEntities, mapTweets } from '../src/x.ts';
 
-// Fixture réaliste : forme de GET /2/users/:id/bookmarks avec expansions.
+// Realistic fixture: shape of GET /2/users/:id/bookmarks with expansions.
 const fullPayload = {
   data: [
     {
@@ -32,7 +32,7 @@ const fullPayload = {
   },
 };
 
-test('mapTweets : réponse pleine avec includes', () => {
+test('mapTweets: full response with includes', () => {
   const tweets = mapTweets(fullPayload, 'x.com');
   assert.equal(tweets.length, 2);
   assert.deepEqual(tweets[0], {
@@ -43,22 +43,22 @@ test('mapTweets : réponse pleine avec includes', () => {
     createdAt: '2026-06-10T14:32:05.000Z',
     url: 'https://x.com/elonmusk/status/1801234567890123456',
   });
-  // L'ordre de l'API est conservé (plus récents en premier).
+  // The API order is preserved (most recent first).
   assert.equal(tweets[1]?.id, '1799876543210987654');
   assert.equal(tweets[1]?.url, 'https://x.com/typescript/status/1799876543210987654');
 });
 
-test('mapTweets : réponse vide (data absent, meta.result_count=0)', () => {
+test('mapTweets: empty response (data missing, meta.result_count=0)', () => {
   const tweets = mapTweets({ meta: { result_count: 0 } }, 'x.com');
   assert.deepEqual(tweets, []);
 });
 
-test('mapTweets : auteur manquant dans includes → Inconnu + URL /i/status', () => {
+test('mapTweets: author missing from includes → Unknown + /i/status URL', () => {
   const payload = {
     data: [
       {
         id: '1790000000000000001',
-        text: 'tweet orphelin',
+        text: 'orphan tweet',
         author_id: '999999',
         created_at: '2026-06-01T00:00:00.000Z',
       },
@@ -68,43 +68,43 @@ test('mapTweets : auteur manquant dans includes → Inconnu + URL /i/status', ()
   };
   const tweets = mapTweets(payload, 'x.com');
   assert.equal(tweets[0]?.authorUsername, 'i');
-  assert.equal(tweets[0]?.authorName, 'Inconnu');
+  assert.equal(tweets[0]?.authorName, 'Unknown');
   assert.equal(tweets[0]?.url, 'https://x.com/i/status/1790000000000000001');
 });
 
-test('mapTweets : includes totalement absent → Inconnu', () => {
+test('mapTweets: includes completely missing → Unknown', () => {
   const payload = {
-    data: [{ id: '42', text: 'sans includes', author_id: '1' }],
+    data: [{ id: '42', text: 'no includes', author_id: '1' }],
     meta: { result_count: 1 },
   };
   const tweets = mapTweets(payload, 'x.com');
-  assert.equal(tweets[0]?.authorName, 'Inconnu');
+  assert.equal(tweets[0]?.authorName, 'Unknown');
   assert.equal(tweets[0]?.url, 'https://x.com/i/status/42');
 });
 
-test('mapTweets : created_at absent → chaîne vide', () => {
+test('mapTweets: created_at missing → empty string', () => {
   const payload = {
-    data: [{ id: '42', text: 'sans date', author_id: '44196397' }],
+    data: [{ id: '42', text: 'no date', author_id: '44196397' }],
     includes: { users: [{ id: '44196397', name: 'Elon Musk', username: 'elonmusk' }] },
     meta: { result_count: 1 },
   };
   assert.equal(mapTweets(payload, 'x.com')[0]?.createdAt, '');
 });
 
-test('decodeApiEntities : décode & < > et eux seuls, &amp; en dernier', () => {
+test('decodeApiEntities: decodes & < > and only those, &amp; last', () => {
   assert.equal(decodeApiEntities('R&amp;D &lt;3 a -&gt; b'), 'R&D <3 a -> b');
-  // texte contenant littéralement « &lt; » (double-encodé par l'API)
+  // text literally containing « &lt; » (double-encoded by the API)
   assert.equal(decodeApiEntities('&amp;lt;'), '&lt;');
   assert.equal(decodeApiEntities('&quot;intact&quot;'), '&quot;intact&quot;');
-  assert.equal(decodeApiEntities('sans entité'), 'sans entité');
+  assert.equal(decodeApiEntities('no entity'), 'no entity');
 });
 
-test('mapTweets : décode les entités HTML renvoyées par l’API (text et name)', () => {
+test('mapTweets: decodes the HTML entities returned by the API (text and name)', () => {
   const payload = {
     data: [
       {
         id: '77',
-        text: 'Q&amp;A sur la R&amp;D : a &lt; b &amp;&amp; b &gt; c &lt;3',
+        text: 'Q&amp;A on R&amp;D: a &lt; b &amp;&amp; b &gt; c &lt;3',
         author_id: '1',
         created_at: '2026-06-01T00:00:00.000Z',
       },
@@ -113,22 +113,22 @@ test('mapTweets : décode les entités HTML renvoyées par l’API (text et name
     meta: { result_count: 1 },
   };
   const tweets = mapTweets(payload, 'x.com');
-  assert.equal(tweets[0]?.text, 'Q&A sur la R&D : a < b && b > c <3');
+  assert.equal(tweets[0]?.text, 'Q&A on R&D: a < b && b > c <3');
   assert.equal(tweets[0]?.authorName, 'Bell & Labs');
 });
 
-test('mapTweets : domaine custom fixupx.com', () => {
+test('mapTweets: custom domain fixupx.com', () => {
   const tweets = mapTweets(fullPayload, 'fixupx.com');
   assert.equal(tweets[0]?.url, 'https://fixupx.com/elonmusk/status/1801234567890123456');
 });
 
-test('mapTweets : payload inattendu → throw explicite', () => {
-  assert.throws(() => mapTweets(null, 'x.com'), /Réponse X inattendue/);
-  assert.throws(() => mapTweets('oops', 'x.com'), /Réponse X inattendue/);
-  assert.throws(() => mapTweets({ data: 'pas un tableau' }, 'x.com'), /Réponse X inattendue/);
+test('mapTweets: unexpected payload → explicit throw', () => {
+  assert.throws(() => mapTweets(null, 'x.com'), /Unexpected X response/);
+  assert.throws(() => mapTweets('oops', 'x.com'), /Unexpected X response/);
+  assert.throws(() => mapTweets({ data: 'not an array' }, 'x.com'), /Unexpected X response/);
   assert.throws(
-    () => mapTweets({ data: [{ id: 42, text: 'id numérique' }] }, 'x.com'),
-    /tweet invalide/,
+    () => mapTweets({ data: [{ id: 42, text: 'numeric id' }] }, 'x.com'),
+    /invalid tweet/,
   );
   assert.throws(
     () => mapTweets({ data: [], includes: { users: [{ id: '1' }] } }, 'x.com'),

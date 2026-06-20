@@ -1,94 +1,94 @@
-# PLAN — Bot de rappel quotidien des bookmarks & likes X
+# PLAN — Daily reminder bot for X bookmarks & likes
 
-> Décisions prises à l'issue du spike initial (2026-06). Ce document est la
-> référence pour l'implémentation.
+> Decisions made at the end of the initial spike (2026-06). This document is the
+> reference for the implementation.
 >
-> **État : E1-E6 implémentés et validés en réel.** Bot local d'abord (auth,
-> refresh 2×, détection, digest Telegram, launchd), puis E6 (tranché après
-> spike, [SPIKE-HOSTING.md](./SPIKE-HOSTING.md)) : Worker Cloudflare +
-> Durable Object SQLite (`worker/`), cœur du run partagé local/cloud
-> (`src/run.ts` + interface `Storage`), bascule exclusive faite (tokens +
-> state seedés dans le DO, routes admin refermées). **CPU mesuré : 4 ms**
-> par run (free tier 10 ms → marge ×2,5 ; point ouvert §5 réglé).
+> **Status: E1-E6 implemented and validated for real.** Local bot first (auth,
+> refresh 2×, detection, Telegram digest, launchd), then E6 (settled after the
+> spike, [SPIKE-HOSTING.md](./SPIKE-HOSTING.md)): Cloudflare Worker +
+> Durable Object SQLite (`worker/`), shared local/cloud run core
+> (`src/run.ts` + `Storage` interface), exclusive cutover done (tokens +
+> state seeded in the DO, admin routes closed back up). **Measured CPU: 4 ms**
+> per run (free tier 10 ms → ×2.5 headroom; open point §5 settled).
 
-## 1. Décisions actées
+## 1. Decisions made
 
-| Sujet | Choix | Pourquoi | Alternatives écartées |
+| Topic | Choice | Why | Alternatives rejected |
 |---|---|---|---|
-| **Source des données** | **API X officielle, pay-per-use** | Légal et contractuel, « Owned Reads » à 0,001 $/post → **~1,50 $/mois** (max ~6 $), rate limits sans objet, hébergeable n'importe où | rettiwt-api (0 € mais contraire aux ToS + fenêtres de casse → reste le **plan B** documenté) · twikit (cassé depuis 03/2026) · twitterapi.io+GetXAPI (credentials confiés à des tiers, pas de lecture likes chez l'un) · Dewey/Tweetsmash (10-14 $/mois, dépendance SaaS) |
-| **Canal de livraison** | **Telegram** | Gratuit, notifications natives mobile **et** desktop, aperçus riches des tweets dans le chat (le digest se lit sans ouvrir X), bot = 1 POST HTTPS | WhatsApp (friction Meta Business ou ban du numéro perso) · ntfy.sh (très bon mais rendu brut) · Discord (embeds X capricieux) · Pushover (payant, rendu pauvre) · email (notifications non fiables) |
-| **Langage / stack** | **TypeScript (Node 22)** | Choix d'équipe ; fetch natif suffit ; ouvre naturellement le portage cloud (val.town / CF Workers = JS) | Python (les spikes l'étaient ; l'ébauche Python du bot a été supprimée) |
-| **Détection « nouveau »** | **Diff d'IDs persisté** (state.json) | Contrainte structurelle vérifiée : X n'expose **jamais** la date d'ajout d'un bookmark/like, seulement la date du tweet | Filtrage par `created_at` (faux : on bookmarke des vieux tweets) |
-| **Hébergement v1** | **launchd sur le Mac, 8h30** | Le 1er run OAuth exige un navigateur de toute façon ; zéro infra | Cloud d'emblée (prévu en option v2 : l'API officielle tolère les IPs datacenter, contrairement au scraping) |
-| **Hébergement v2 (E6)** | **Cloudflare Workers free + Durable Object SQLite** (spike : [SPIKE-HOSTING.md](./SPIKE-HOSTING.md)) | 0 $/mois ; output gates des DO = seule garantie *documentée* compatible avec la rotation du refresh token à usage unique ; routes `/auth`+`/callback` hébergées → **re-auth depuis le téléphone** | Workers KV (eventually-consistent, read-your-own-writes non garanti) · Deno Deploy (KV excellent mais plateforme en churn) · val.town (code forcé public en free, pérennité) · GH Actions (cron droppable) · Raspberry Pi Zero 2 W (= **plan B** : zéro portage, mais re-auth par SSH) |
-| **UX du digest** | 1 notification récap + 1 message **silencieux** par tweet (aperçu riche) ; « rien de nouveau ✨ » silencieux ; **alerte ⚠️ Telegram en cas d'échec** | Une seule sonnerie le matin, previews complets, et le silence du bot n'est jamais ambigu | Tout-en-un-message (un seul aperçu) · ne rien envoyer les jours vides (indistinguable d'une panne) |
+| **Data source** | **Official X API, pay-per-use** | Legal and contractual, "Owned Reads" at $0.001/post → **~$1.50/month** (max ~$6), rate limits a non-issue, hostable anywhere | rettiwt-api (free but against the ToS + breakage windows → remains the documented **plan B**) · twikit (broken since 03/2026) · twitterapi.io+GetXAPI (credentials handed to third parties, no likes reading on one of them) · Dewey/Tweetsmash ($10-14/month, SaaS dependency) |
+| **Delivery channel** | **Telegram** | Free, native notifications on mobile **and** desktop, rich tweet previews in the chat (the digest reads without opening X), bot = 1 HTTPS POST | WhatsApp (Meta Business friction or ban of the personal number) · ntfy.sh (very good but raw rendering) · Discord (finicky X embeds) · Pushover (paid, poor rendering) · email (unreliable notifications) |
+| **Language / stack** | **TypeScript (Node 22)** | Team choice; native fetch is enough; naturally opens the door to the cloud port (val.town / CF Workers = JS) | Python (the spikes were in it; the Python draft of the bot was removed) |
+| **"New" detection** | **Persisted ID diff** (state.json) | Verified structural constraint: X **never** exposes the date a bookmark/like was added, only the tweet's date | Filtering by `created_at` (wrong: we bookmark old tweets) |
+| **Hosting v1** | **launchd on the Mac, 8:30am** | The 1st OAuth run requires a browser anyway; zero infra | Cloud from the start (planned as a v2 option: the official API tolerates datacenter IPs, unlike scraping) |
+| **Hosting v2 (E6)** | **Cloudflare Workers free + Durable Object SQLite** (spike: [SPIKE-HOSTING.md](./SPIKE-HOSTING.md)) | $0/month; DO output gates = the only *documented* guarantee compatible with the rotation of the single-use refresh token; `/auth`+`/callback` routes hosted → **re-auth from the phone** | Workers KV (eventually-consistent, read-your-own-writes not guaranteed) · Deno Deploy (excellent KV but a platform in churn) · val.town (code forced public on the free tier, longevity) · GH Actions (droppable cron) · Raspberry Pi Zero 2 W (= **plan B**: zero porting, but re-auth over SSH) |
+| **Digest UX** | 1 summary notification + 1 **silent** message per tweet (rich preview); silent "nothing new ✨"; **⚠️ Telegram alert on failure** | A single ring in the morning, full previews, and the bot's silence is never ambiguous | All-in-one-message (a single preview) · sending nothing on empty days (indistinguishable from an outage) |
 
-## 2. Architecture cible
+## 2. Target architecture
 
 ```
-launchd (tous les jours, 8h30)
-   └─▶ bot TypeScript (run unique, ~10 s)
-        1. refresh OAuth 2.0          → rotation du token persistée ATOMIQUEMENT
+launchd (every day, 8:30am)
+   └─▶ TypeScript bot (single run, ~10 s)
+        1. refresh OAuth 2.0          → token rotation persisted ATOMICALLY
         2. GET /2/users/:id/bookmarks  ┐ max_results=25, tweet.fields, expansions
-           GET /2/users/:id/liked_tweets ┘ (≈ 0,05 $/jour max)
-        3. diff d'IDs vs state.json   → nouveautés depuis le dernier run
-        4. Telegram sendMessage (HTML) : récap notifiant + items silencieux avec preview
-        └─ catch global → message « ⚠️ le bot a échoué : … » sur Telegram
+           GET /2/users/:id/liked_tweets ┘ (≈ $0.05/day max)
+        3. ID diff vs state.json   → new items since the last run
+        4. Telegram sendMessage (HTML): notifying summary + silent items with preview
+        └─ global catch → "⚠️ the bot failed: …" message on Telegram
 
-Fichiers locaux (gitignorés) : tokens.json (secret), state.json
-Config (.env) : X_CLIENT_ID[, X_CLIENT_SECRET], TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+Local files (gitignored): tokens.json (secret), state.json
+Config (.env): X_CLIENT_ID[, X_CLIENT_SECRET], TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
                 [MAX_RESULTS=25, TWEET_LINK_DOMAIN=x.com]
 ```
 
-## 3. Prérequis humains (une fois, ~20 min — bloquants pour E2+)
+## 3. Human prerequisites (one-time, ~20 min — blocking for E2+)
 
-- [ ] Compte développeur sur https://developer.x.com → projet + app, **charger des crédits** (CB requise ; le montant minimum de top-up n'est pas documenté publiquement → à constater à l'inscription)
-- [ ] Dans l'app X : OAuth 2.0 activé, type *Web App/Public client*, callback `http://127.0.0.1:8765/callback` (bien `127.0.0.1`, pas `localhost` — recommandation doc X) → noter `X_CLIENT_ID` (+ secret si client confidentiel)
-- [ ] Telegram : @BotFather → `/newbot` → `TELEGRAM_BOT_TOKEN` ; envoyer un message au bot ; lire son `chat.id` via `https://api.telegram.org/bot<TOKEN>/getUpdates`
-- [ ] Créer `.env` à la racine et remplir (variables listées au §2 ; gitignoré)
+- [ ] Developer account on https://developer.x.com → project + app, **load credits** (card required; the minimum top-up amount is not publicly documented → to be observed at signup)
+- [ ] In the X app: OAuth 2.0 enabled, type *Web App/Public client*, callback `http://127.0.0.1:8765/callback` (use `127.0.0.1`, not `localhost` — X docs recommendation) → note `X_CLIENT_ID` (+ secret if confidential client)
+- [ ] Telegram: @BotFather → `/newbot` → `TELEGRAM_BOT_TOKEN`; send a message to the bot; read its `chat.id` via `https://api.telegram.org/bot<TOKEN>/getUpdates`
+- [ ] Create `.env` at the root and fill it in (variables listed in §2; gitignored)
 
-## 4. Étapes d'implémentation (TypeScript)
+## 4. Implementation steps (TypeScript)
 
-| # | Étape | Contenu | Critère de done |
+| # | Step | Content | Definition of done |
 |---|---|---|---|
-| E1 | Squelette | `npm init` propre + `src/`, exécution TS (tsx **ou** `node --experimental-strip-types` — à trancher), chargeur .env minimal, `.env.example` recréé, zéro framework, fetch natif | `npm run digest` s'exécute à blanc |
-| E2 | Auth X | `npm run auth` : flow OAuth 2.0 + PKCE (serveur local éphémère sur 127.0.0.1, scopes `tweet.read users.read bookmark.read like.read offline.access`) → `tokens.json` ; refresh avec **écriture atomique** (token à usage unique). Flow et pièges (scopes, endpoints OAuth, rotation à usage unique) : doc officielle docs.x.com | tokens obtenus, refresh enchaîné 2× sans casse |
-| E3 | Fetch + diff | Client X minimal (2 endpoints), state.json, merge plafonné (~2000 IDs) | nouveautés détectées après un bookmark de test |
-| E4 | Telegram | Sender : récap + messages silencieux avec `link_preview_options`, échappement HTML, découpe à 4096 chars, throttle ~1 msg/s ; alerte d'erreur globale | digest e2e reçu sur mobile **et** desktop |
-| E5 | Prod locale | Script d'installation launchd (8h30, logs, `kickstart` pour tester) ; **1 semaine d'observation** : coûts réels dans le Developer Console, fiabilité des previews x.com | 7 digests consécutifs sans intervention |
-| E6 | Cloud | Portage **Cloudflare Workers free** (décidé, détail : [SPIKE-HOSTING.md](./SPIKE-HOSTING.md)) : tokens + state dans un **Durable Object SQLite** derrière une abstraction `Storage`, routes `/auth` + `/callback` sur l'URL workers.dev (URL secrète + state CSRF), **double cron UTC** pour tenir 8h30 Europe/Paris été/hiver, **bascule exclusive** local→cloud (bootout launchd → seed tokens+state → suppression locale ; jamais les deux en parallèle) | digest reçu Mac éteint ; re-auth testée depuis le téléphone |
+| E1 | Skeleton | Clean `npm init` + `src/`, TS execution (tsx **or** `node --experimental-strip-types` — to be decided), minimal .env loader, `.env.example` recreated, zero framework, native fetch | `npm run digest` runs as a dry run |
+| E2 | X Auth | `npm run auth`: OAuth 2.0 + PKCE flow (ephemeral local server on 127.0.0.1, scopes `tweet.read users.read bookmark.read like.read offline.access`) → `tokens.json`; refresh with **atomic write** (single-use token). Flow and pitfalls (scopes, OAuth endpoints, single-use rotation): official docs.x.com docs | tokens obtained, refresh chained 2× without breaking |
+| E3 | Fetch + diff | Minimal X client (2 endpoints), state.json, capped merge (~2000 IDs) | new items detected after a test bookmark |
+| E4 | Telegram | Sender: summary + silent messages with `link_preview_options`, HTML escaping, splitting at 4096 chars, throttle ~1 msg/s; global error alert | e2e digest received on mobile **and** desktop |
+| E5 | Local prod | launchd install script (8:30am, logs, `kickstart` to test); **1 week of observation**: real costs in the Developer Console, reliability of x.com previews | 7 consecutive digests without intervention |
+| E6 | Cloud | Port to **Cloudflare Workers free** (decided, details: [SPIKE-HOSTING.md](./SPIKE-HOSTING.md)): tokens + state in a **Durable Object SQLite** behind a `Storage` abstraction, `/auth` + `/callback` routes on the workers.dev URL (secret URL + CSRF state), **double UTC cron** to hold 8:30am Europe/Paris summer/winter, **exclusive cutover** local→cloud (launchd bootout → seed tokens+state → local removal; never both in parallel) | digest received with the Mac off; re-auth tested from the phone |
 
-Estimation : **2-4 h de dev cumulées** (E1-E5). Coût récurrent : ~1,50 $/mois.
+Estimate: **2-4 h of cumulative dev** (E1-E5). Recurring cost: ~$1.50/month.
 
-## 5. Points ouverts (à vérifier au moment de l'implémentation)
+## 5. Open points (to verify at implementation time)
 
-Tranchés à l'implémentation E1-E5 (2026-06-12) :
-- ~~SDK ou fetch direct ?~~ → **fetch direct**, zéro dépendance runtime (`twitter-api-v2` aurait été une dépendance à surveiller pour rien).
-- ~~tsx ou `node --experimental-strip-types` ?~~ → **type stripping natif** (activé par défaut depuis Node 22.18 ; Node 22.22 installé).
+Settled during the E1-E5 implementation (2026-06-12):
+- ~~SDK or direct fetch?~~ → **direct fetch**, zero runtime dependency (`twitter-api-v2` would have been a dependency to monitor for nothing).
+- ~~tsx or `node --experimental-strip-types`?~~ → **native type stripping** (enabled by default since Node 22.18; Node 22.22 installed).
 
-Restent ouverts :
-- Montant minimum de rechargement des crédits X (constaté à l'inscription).
-- Qualité réelle des aperçus Telegram sur les liens `x.com` (fallback prévu : `TWEET_LINK_DOMAIN=fixupx.com`).
-- Heure exacte du digest (8h30 par défaut, paramètre du script d'install).
-- Pour E6 (détail : SPIKE-HOSTING.md §5) : les **10 ms de CPU actif** du free tier Workers à mesurer sur un run réel (les await réseau ne comptent pas) ; la redirect URI est alignée sur `http://127.0.0.1:8765/callback` depuis le 2026-06-12 (recommandation doc X — `src/auth.ts` et §3 ci-dessus) — il ne reste que l'ajout de la deuxième URI cloud à E6.
+Still open:
+- Minimum top-up amount for X credits (observed at signup).
+- Actual quality of Telegram previews on `x.com` links (planned fallback: `TWEET_LINK_DOMAIN=fixupx.com`).
+- Exact digest time (8:30am by default, a parameter of the install script).
+- For E6 (details: SPIKE-HOSTING.md §5): the **10 ms of active CPU** on the Workers free tier, to be measured on a real run (network awaits don't count); the redirect URI is aligned with `http://127.0.0.1:8765/callback` as of 2026-06-12 (X docs recommendation — `src/auth.ts` and §3 above) — all that remains is adding the second cloud URI at E6.
 
-## 6. Risques résiduels (connus et acceptés)
+## 6. Residual risks (known and accepted)
 
-- **Rotation du refresh token** X à usage unique : une écriture ratée = re-auth manuelle (mitigé : écriture atomique + alerte Telegram).
-- Tarifs API « subject to change » (la grille fait foi dans le Developer Console).
-- Un item bookmarké **puis retiré** entre deux runs passe sous le radar ; le 1er run établit la référence sans digest. Acceptable pour l'usage.
-- Mac éteint à 8h30 = run manqué (simple veille = rattrapé au réveil) → c'est la motivation de E6.
-- Pagination bookmarks plafonnée ~800 items côté X (sans objet en rythme quotidien ; backfill historique possible une fois via twitter-web-exporter).
+- **Rotation of the single-use X refresh token**: a failed write = manual re-auth (mitigated: atomic write + Telegram alert).
+- API pricing "subject to change" (the schedule in the Developer Console is authoritative).
+- An item bookmarked **then removed** between two runs slips under the radar; the 1st run establishes the baseline without a digest. Acceptable for the use case.
+- Mac off at 8:30am = missed run (plain sleep = caught up on wake) → this is the motivation for E6.
+- Bookmarks pagination capped at ~800 items on X's side (a non-issue at a daily cadence; a one-time historical backfill is possible via twitter-web-exporter).
 
-## 7. Contenu actuel du repo
+## 7. Current contents of the repo
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `PLAN.md` | Ce document — la référence pour l'implémentation |
-| `SPIKE-HOSTING.md` | Spike E6 : hébergement + stratégie d'auth hébergée — justifie la décision Cloudflare Workers + Durable Object |
-| `README.md` | Mode d'emploi : prérequis §3 pas à pas, installation, dépannage |
-| `src/`, `tests/`, `scripts/` | Implémentation E1-E5 (TypeScript, zéro dépendance runtime) + tests + scripts launchd |
+| `PLAN.md` | This document — the reference for the implementation |
+| `SPIKE-HOSTING.md` | E6 spike: hosting + hosted-auth strategy — justifies the Cloudflare Workers + Durable Object decision |
+| `README.md` | How-to: prerequisites §3 step by step, installation, troubleshooting |
+| `src/`, `tests/`, `scripts/` | E1-E5 implementation (TypeScript, zero runtime dependency) + tests + launchd scripts |
 
-Les artefacts temporaires du spike initial (scripts, rapports d'état de
-l'art, dépendances Python/Node) ont été supprimés après les arbitrages :
-les conclusions utiles sont consolidées dans le §1 ci-dessus.
+The temporary artifacts of the initial spike (scripts, state-of-the-art
+reports, Python/Node dependencies) were removed after the decisions:
+the useful conclusions are consolidated in §1 above.

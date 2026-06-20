@@ -1,17 +1,17 @@
-// Rotation des tokens OAuth 2.0 au-dessus de l'abstraction Storage.
-// Le refresh token X est à USAGE UNIQUE (PLAN.md §6) : toute rotation est
-// persistée via storage.putTokens immédiatement après le parse réussi.
-// Aucun import node:* : ce module tourne en local ET sur le Worker.
+// OAuth 2.0 token rotation on top of the Storage abstraction.
+// The X refresh token is SINGLE-USE (PLAN.md §6): every rotation is
+// persisted via storage.putTokens immediately after a successful parse.
+// No node:* imports: this module runs locally AND on the Worker.
 
 import type { Storage } from './storage.ts';
 import type { Config, Tokens } from './types.ts';
 
 export const TOKEN_URL = 'https://api.x.com/2/oauth2/token';
 
-/** Marge (ms) : on refresh si l'access token expire dans moins de 60 s. */
+/** Margin (ms): refresh if the access token expires in less than 60 s. */
 export const EXPIRY_MARGIN_MS = 60_000;
 
-/** Validation grossière de la forme d'un jeu de tokens persisté. */
+/** Rough validation of the shape of a persisted token set. */
 export function isValidTokens(value: unknown): value is Tokens {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
@@ -28,7 +28,7 @@ export function isValidTokens(value: unknown): value is Tokens {
   );
 }
 
-/** Vrai si l'access token expire dans moins de marginMs (ou est déjà expiré). */
+/** True if the access token expires in less than marginMs (or is already expired). */
 export function isExpired(
   tokens: Pick<Tokens, 'expiresAt'>,
   nowMs: number,
@@ -38,10 +38,10 @@ export function isExpired(
 }
 
 /**
- * Prépare la requête vers le endpoint token : Basic auth si client
- * confidentiel (et pas de client_id dans le body), sinon client_id dans le
- * body (client public, PKCE seul). btoa (et pas Buffer) : dispo dans les
- * deux runtimes, les credentials OAuth sont ASCII.
+ * Builds the request to the token endpoint: Basic auth for a confidential
+ * client (and no client_id in the body), otherwise client_id in the body
+ * (public client, PKCE only). btoa (not Buffer): available in both runtimes,
+ * and OAuth credentials are ASCII.
  */
 export function buildTokenRequest(
   config: Pick<Config, 'xClientId' | 'xClientSecret'>,
@@ -60,10 +60,10 @@ export function buildTokenRequest(
 }
 
 /**
- * Mappe la réponse JSON du endpoint token vers les champs token de Tokens.
- * fallbackRefreshToken : conservé si la réponse n'en contient pas (ne devrait
- * pas arriver avec le scope offline.access, mais on ne perd jamais le seul
- * refresh token valide).
+ * Maps the token endpoint's JSON response to the token fields of Tokens.
+ * fallbackRefreshToken: kept if the response doesn't contain one (shouldn't
+ * happen with the offline.access scope, but we never lose the only valid
+ * refresh token).
  */
 export function parseTokenResponse(
   payload: unknown,
@@ -71,14 +71,14 @@ export function parseTokenResponse(
   fallbackRefreshToken?: string,
 ): Pick<Tokens, 'accessToken' | 'refreshToken' | 'expiresAt'> {
   if (typeof payload !== 'object' || payload === null) {
-    throw new Error('Réponse token invalide : pas un objet JSON');
+    throw new Error('Invalid token response: not a JSON object');
   }
   const p = payload as Record<string, unknown>;
   if (typeof p.access_token !== 'string' || p.access_token.length === 0) {
-    throw new Error('Réponse token invalide : access_token manquant');
+    throw new Error('Invalid token response: missing access_token');
   }
   if (typeof p.expires_in !== 'number' || !Number.isFinite(p.expires_in)) {
-    throw new Error('Réponse token invalide : expires_in manquant');
+    throw new Error('Invalid token response: missing expires_in');
   }
   const refreshToken =
     typeof p.refresh_token === 'string' && p.refresh_token.length > 0
@@ -86,7 +86,7 @@ export function parseTokenResponse(
       : fallbackRefreshToken;
   if (!refreshToken) {
     throw new Error(
-      'Réponse token invalide : refresh_token manquant (scope offline.access requis)',
+      'Invalid token response: missing refresh_token (offline.access scope required)',
     );
   }
   return {
@@ -97,9 +97,9 @@ export function parseTokenResponse(
 }
 
 /**
- * Retourne un access token valide, en le rafraîchissant si nécessaire.
- * La rotation est persistée IMMÉDIATEMENT après le parse réussi : le refresh
- * token X est à usage unique, une rotation non persistée = re-auth manuelle.
+ * Returns a valid access token, refreshing it if necessary.
+ * The rotation is persisted IMMEDIATELY after a successful parse: the X
+ * refresh token is single-use, and an unpersisted rotation = manual re-auth.
  */
 export async function getValidAccessToken(
   config: Config,
@@ -107,7 +107,7 @@ export async function getValidAccessToken(
 ): Promise<{ accessToken: string; userId: string }> {
   const tokens = await storage.getTokens();
   if (!tokens) {
-    throw new Error(`Aucun token X enregistré — ${config.reauthHint}`);
+    throw new Error(`No X token stored — ${config.reauthHint}`);
   }
   if (!isExpired(tokens, Date.now())) {
     return { accessToken: tokens.accessToken, userId: tokens.userId };
@@ -121,8 +121,8 @@ export async function getValidAccessToken(
   const text = await response.text();
   if (!response.ok) {
     throw new Error(
-      `Échec du refresh du token X (HTTP ${response.status}) : ${text.slice(0, 300)} — ` +
-        `le refresh token est probablement consommé ou révoqué, ${config.reauthHint}`,
+      `X token refresh failed (HTTP ${response.status}): ${text.slice(0, 300)} — ` +
+        `the refresh token has probably been consumed or revoked, ${config.reauthHint}`,
     );
   }
   let payload: unknown;
@@ -130,7 +130,7 @@ export async function getValidAccessToken(
     payload = JSON.parse(text);
   } catch {
     throw new Error(
-      `Réponse du refresh X illisible (HTTP ${response.status}) : ${text.slice(0, 300)}`,
+      `Unreadable X refresh response (HTTP ${response.status}): ${text.slice(0, 300)}`,
     );
   }
 
@@ -140,7 +140,7 @@ export async function getValidAccessToken(
     userId: tokens.userId,
     username: tokens.username,
   };
-  // Persistance immédiate, avant tout autre travail (usage unique).
+  // Persist immediately, before any other work (single-use).
   await storage.putTokens(next);
   return { accessToken: next.accessToken, userId: next.userId };
 }

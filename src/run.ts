@@ -1,6 +1,6 @@
-// Cœur du run quotidien (PLAN.md §2), partagé local/Worker : auth → fetch →
-// diff → envoi → persistance. Aucun import node:*, aucune sortie console —
-// l'appelant (digest.ts ou le Durable Object) logge le résumé retourné.
+// Core of the daily run (PLAN.md §2), shared local/Worker: auth → fetch →
+// diff → send → persistence. No node:* imports, no console output —
+// the caller (digest.ts or the Durable Object) logs the returned summary.
 
 import { computeDiff } from './state.ts';
 import type { Storage } from './storage.ts';
@@ -24,13 +24,13 @@ export async function runDigest(
 
   await sendDigest(config, diff, telegramDeps);
 
-  // Persisté APRÈS l'envoi réussi : si Telegram échoue, on re-signalera
-  // les mêmes items demain (un doublon vaut mieux qu'un trou).
+  // Persisted AFTER a successful send: if Telegram fails, we'll re-report
+  // the same items tomorrow (a duplicate beats a gap).
   await storage.putState(nextState);
 
   const durationS = ((Date.now() - startedAt) / 1000).toFixed(1);
   const summary = diff.isFirstRun
-    ? `premier run : référence établie (${diff.trackedCounts.bookmarks} bookmarks, ${diff.trackedCounts.likes} likes vus)`
-    : `${diff.newBookmarks.length} nouveau(x) bookmark(s), ${diff.newLikes.length} nouveau(x) like(s)`;
+    ? `first run: baseline established (${diff.trackedCounts.bookmarks} bookmarks, ${diff.trackedCounts.likes} likes seen)`
+    : `${diff.newBookmarks.length} new bookmark(s), ${diff.newLikes.length} new like(s)`;
   return `${summary} — ${durationS} s`;
 }

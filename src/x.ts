@@ -1,13 +1,13 @@
-// Client X API v2 minimal : bookmarks + likes, une page chacun (PLAN.md §6 —
-// rythme quotidien, pas de pagination). Pas de retry : le run quotidien suivant
-// et l'alerte Telegram suffisent (PLAN.md §2).
+// Minimal X API v2 client: bookmarks + likes, one page each (PLAN.md §6 —
+// daily cadence, no pagination). No retry: the next daily run and the Telegram
+// alert are enough (PLAN.md §2).
 
 import type { Config, FetchResult, Tweet } from './types.ts';
 
 const API_BASE = 'https://api.x.com/2';
 
 // ---------------------------------------------------------------------------
-// Type guards maison (zéro dépendance) : on valide juste ce qu'on consomme.
+// Home-made type guards (zero dependencies): we only validate what we consume.
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -44,51 +44,51 @@ function isRawUser(value: unknown): value is RawUser {
 }
 
 /**
- * L'API X v2 renvoie `text` (et `name`) déjà HTML-échappés pour & < >
- * (quirk historique : « R&D <3 » arrive comme « R&amp;D &lt;3 »). On décode
- * ici pour stocker le texte BRUT dans Tweet ; telegram.ts ré-échappe ensuite,
- * sinon Telegram afficherait les entités littéralement (« R&amp;D »).
- * `&amp;` est décodé en DERNIER : un tweet contenant littéralement « &lt; »
- * arrive comme « &amp;lt; » et doit redonner « &lt; », pas « < ».
+ * The X v2 API returns `text` (and `name`) already HTML-escaped for & < >
+ * (historical quirk: « R&D <3 » arrives as « R&amp;D &lt;3 »). We decode
+ * here to store the RAW text in Tweet; telegram.ts re-escapes afterwards,
+ * otherwise Telegram would display the entities literally (« R&amp;D »).
+ * `&amp;` is decoded LAST: a tweet literally containing « &lt; »
+ * arrives as « &amp;lt; » and must yield « &lt; » back, not « < ».
  */
 export function decodeApiEntities(s: string): string {
   return s.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
 }
 
 /**
- * Transforme un payload brut de l'API v2 (bookmarks ou liked_tweets) en
- * Tweet[]. Pur et sans réseau, pour être testable.
+ * Transforms a raw v2 API payload (bookmarks or liked_tweets) into
+ * Tweet[]. Pure and network-free, to be testable.
  *
- * - `data` absent = 0 résultat (forme normale de l'API) → [].
- * - Auteur introuvable dans includes.users → 'i'/'Inconnu' et l'URL
- *   universelle https://{domain}/i/status/{id}.
- * - L'ordre renvoyé par l'API est conservé (plus récents en premier).
+ * - `data` missing = 0 results (normal API shape) → [].
+ * - Author not found in includes.users → 'i'/'Unknown' and the
+ *   universal URL https://{domain}/i/status/{id}.
+ * - The order returned by the API is preserved (most recent first).
  */
 export function mapTweets(payload: unknown, tweetLinkDomain: string): Tweet[] {
   if (!isRecord(payload)) {
-    throw new Error(`Réponse X inattendue : pas un objet JSON (reçu : ${typeof payload})`);
+    throw new Error(`Unexpected X response: not a JSON object (received: ${typeof payload})`);
   }
 
   const data = payload.data;
-  if (data === undefined) return []; // 0 résultat : l'API omet data
+  if (data === undefined) return []; // 0 results: the API omits data
   if (!Array.isArray(data)) {
-    throw new Error('Réponse X inattendue : le champ "data" n\'est pas un tableau');
+    throw new Error('Unexpected X response: the "data" field is not an array');
   }
 
   const usersById = new Map<string, RawUser>();
   const includes = payload.includes;
   if (includes !== undefined) {
     if (!isRecord(includes)) {
-      throw new Error('Réponse X inattendue : le champ "includes" n\'est pas un objet');
+      throw new Error('Unexpected X response: the "includes" field is not an object');
     }
     const users = includes.users;
     if (users !== undefined) {
       if (!Array.isArray(users)) {
-        throw new Error('Réponse X inattendue : "includes.users" n\'est pas un tableau');
+        throw new Error('Unexpected X response: "includes.users" is not an array');
       }
       for (const user of users) {
         if (!isRawUser(user)) {
-          throw new Error('Réponse X inattendue : entrée invalide dans "includes.users"');
+          throw new Error('Unexpected X response: invalid entry in "includes.users"');
         }
         usersById.set(user.id, user);
       }
@@ -97,7 +97,7 @@ export function mapTweets(payload: unknown, tweetLinkDomain: string): Tweet[] {
 
   return data.map((raw, index) => {
     if (!isRawTweet(raw)) {
-      throw new Error(`Réponse X inattendue : tweet invalide à l'index ${index} de "data"`);
+      throw new Error(`Unexpected X response: invalid tweet at index ${index} of "data"`);
     }
     const author = raw.author_id !== undefined ? usersById.get(raw.author_id) : undefined;
     const authorUsername = author?.username ?? 'i';
@@ -105,9 +105,9 @@ export function mapTweets(payload: unknown, tweetLinkDomain: string): Tweet[] {
       id: raw.id,
       text: decodeApiEntities(raw.text),
       authorUsername,
-      authorName: author !== undefined ? decodeApiEntities(author.name) : 'Inconnu',
+      authorName: author !== undefined ? decodeApiEntities(author.name) : 'Unknown',
       createdAt: raw.created_at ?? '',
-      // /i/status/{id} : forme universelle quand l'auteur est inconnu
+      // /i/status/{id}: universal form when the author is unknown
       url: `https://${tweetLinkDomain}/${authorUsername}/status/${raw.id}`,
     };
   });
@@ -133,12 +133,12 @@ async function fetchTimeline(
     const body = (await response.text().catch(() => '')).slice(0, 300);
     let hint = '';
     if (response.status === 401) {
-      hint = ` — token invalide ou expiré, ${config.reauthHint}`;
+      hint = ` — invalid or expired token, ${config.reauthHint}`;
     } else if (response.status === 429) {
-      hint = ' — rate limit X atteint, réessayer plus tard';
+      hint = ' — X rate limit reached, retry later';
     }
     throw new Error(
-      `Échec de l'appel X GET /2/users/:id/${endpoint} (HTTP ${response.status})${hint}. Corps : ${body}`,
+      `X call failed GET /2/users/:id/${endpoint} (HTTP ${response.status})${hint}. Body: ${body}`,
     );
   }
 
@@ -146,7 +146,7 @@ async function fetchTimeline(
   return mapTweets(payload, config.tweetLinkDomain);
 }
 
-/** Récupère une page de bookmarks et une page de likes (en parallèle). */
+/** Fetches one page of bookmarks and one page of likes (in parallel). */
 export async function fetchBookmarksAndLikes(
   accessToken: string,
   userId: string,

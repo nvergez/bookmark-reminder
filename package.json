@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Bot de rappel quotidien des bookmarks & likes X → Telegram (local ou Cloudflare Workers)",
+  "description": "Daily reminder bot for X bookmarks & likes → Telegram (local or Cloudflare Workers)",
   "author": "Nicolas Vergez",
   "license": "MIT",
   "engines": {

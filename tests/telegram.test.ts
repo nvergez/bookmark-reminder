@@ -1,4 +1,4 @@
-// Tests purs du sender Telegram : aucun réseau, fetch et sleep injectés.
+// Pure tests for the Telegram sender: no network, fetch and sleep injected.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +12,7 @@ const config: Config = {
   telegramChatId: '4242',
   maxResults: 25,
   tweetLinkDomain: 'x.com',
-  reauthHint: 'relance `npm run auth`',
+  reauthHint: 're-run `npm run auth`',
 };
 
 interface SentPayload {
@@ -27,7 +27,7 @@ function telegramOk(): Response {
   return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), { status: 200 });
 }
 
-/** Mock fetch/sleep : enregistre les payloads, sert une file de réponses. */
+/** Mock fetch/sleep: records the payloads, serves a queue of responses. */
 function makeMock(queue: Response[] = []) {
   const calls: { url: string; payload: SentPayload }[] = [];
   const sleeps: number[] = [];
@@ -64,50 +64,50 @@ function diff(partial: Partial<DigestDiff>): DigestDiff {
 
 // --- escapeHtml ---------------------------------------------------------
 
-test('escapeHtml échappe & < > et rien d’autre', () => {
+test('escapeHtml escapes & < > and nothing else', () => {
   assert.equal(escapeHtml('a & b <c> "d"'), 'a &amp; b &lt;c&gt; "d"');
-  assert.equal(escapeHtml('déjà &amp;'), 'déjà &amp;amp;'); // pas de double interprétation
+  assert.equal(escapeHtml('already &amp;'), 'already &amp;amp;'); // no double interpretation
   assert.equal(escapeHtml(''), '');
 });
 
 // --- chunkMessage -------------------------------------------------------
 
-test('chunkMessage laisse intact un texte plus court que max', () => {
+test('chunkMessage leaves intact text shorter than max', () => {
   assert.deepEqual(chunkMessage('court', 100), ['court']);
 });
 
-test('chunkMessage découpe de préférence sur un saut de ligne', () => {
+test('chunkMessage splits preferably on a newline', () => {
   const s = 'ligne-1\nligne-2\nligne-3';
   const chunks = chunkMessage(s, 16);
   assert.deepEqual(chunks, ['ligne-1\nligne-2', 'ligne-3']);
 });
 
-test('chunkMessage découpe quand même un texte sans saut de ligne', () => {
+test('chunkMessage still splits text without a newline', () => {
   const s = 'a'.repeat(25);
   const chunks = chunkMessage(s, 10);
   assert.deepEqual(chunks, ['a'.repeat(10), 'a'.repeat(10), 'a'.repeat(5)]);
   assert.equal(chunks.join(''), s);
 });
 
-test('chunkMessage ne produit jamais de chunk vide', () => {
+test('chunkMessage never produces an empty chunk', () => {
   const chunks = chunkMessage('a\nb\n\n\nc', 1);
   assert.deepEqual(chunks, ['a', 'b', 'c']);
   for (const chunk of chunks) assert.ok(chunk.length > 0);
 });
 
-test('chunkMessage ne coupe pas au milieu d’une entité HTML', () => {
-  const s = 'aaaaaaaa&amp;bbbb'; // coupe dure à 10 tomberait dans &amp;
+test('chunkMessage does not cut in the middle of an HTML entity', () => {
+  const s = 'aaaaaaaa&amp;bbbb'; // a hard cut at 10 would fall inside &amp;
   const chunks = chunkMessage(s, 10);
   assert.deepEqual(chunks, ['aaaaaaaa', '&amp;bbbb']);
 });
 
-// --- sendDigest : digest normal ------------------------------------------
+// --- sendDigest: normal digest -------------------------------------------
 
-test('sendDigest envoie un récap notifiant puis un item silencieux par tweet', async () => {
+test('sendDigest sends a notifying recap then one silent item per tweet', async () => {
   const mock = makeMock();
   const d = diff({
-    newBookmarks: [tweet('1', 'premier bookmark'), tweet('2', 'second bookmark')],
-    newLikes: [tweet('3', 'un like')],
+    newBookmarks: [tweet('1', 'first bookmark'), tweet('2', 'second bookmark')],
+    newLikes: [tweet('3', 'a like')],
   });
   await sendDigest(config, d, { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn });
 
@@ -119,8 +119,8 @@ test('sendDigest envoie un récap notifiant puis un item silencieux par tweet', 
   assert.equal(recap.payload.parse_mode, 'HTML');
   assert.equal(recap.payload.disable_notification, false);
   assert.deepEqual(recap.payload.link_preview_options, { is_disabled: true });
-  assert.ok(recap.payload.text.includes('2 nouveaux bookmarks 🔖'));
-  assert.ok(recap.payload.text.includes('1 nouveau like ❤️'));
+  assert.ok(recap.payload.text.includes('2 new bookmarks 🔖'));
+  assert.ok(recap.payload.text.includes('1 new like ❤️'));
 
   const firstItem = mock.calls[1];
   assert.ok(firstItem);
@@ -137,16 +137,16 @@ test('sendDigest envoie un récap notifiant puis un item silencieux par tweet', 
   assert.ok(likeItem.payload.text.startsWith('❤️ '));
   assert.equal(likeItem.payload.link_preview_options.url, 'https://x.com/alice/status/3');
 
-  // throttle entre chaque message (pas avant le premier)
+  // throttle between each message (not before the first)
   assert.deepEqual(mock.sleeps, [1100, 1100, 1100]);
 });
 
-// --- sendDigest : premier run --------------------------------------------
+// --- sendDigest: first run -----------------------------------------------
 
-test('sendDigest premier run : un seul message silencieux de référence', async () => {
+test('sendDigest first run: a single silent baseline message', async () => {
   const mock = makeMock();
-  // Forme réelle produite par computeDiff(null, …) : listes de nouveautés
-  // VIDES, seuls les compteurs portent ce qui a été enregistré.
+  // Real shape produced by computeDiff(null, …): EMPTY lists of new items,
+  // only the counters carry what was recorded.
   const d = diff({
     isFirstRun: true,
     trackedCounts: { bookmarks: 2, likes: 1 },
@@ -162,23 +162,23 @@ test('sendDigest premier run : un seul message silencieux de référence', async
   assert.deepEqual(call.payload.link_preview_options, { is_disabled: true });
 });
 
-// --- sendDigest : rien de nouveau -----------------------------------------
+// --- sendDigest: nothing new ----------------------------------------------
 
-test('sendDigest sans nouveautés : un seul « Rien de nouveau ✨ » silencieux', async () => {
+test('sendDigest with no new items: a single silent "Nothing new ✨"', async () => {
   const mock = makeMock();
   await sendDigest(config, diff({}), { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn });
 
   assert.equal(mock.calls.length, 1);
   const call = mock.calls[0];
   assert.ok(call);
-  assert.equal(call.payload.text, 'Rien de nouveau ✨');
+  assert.equal(call.payload.text, 'Nothing new ✨');
   assert.equal(call.payload.disable_notification, true);
   assert.deepEqual(call.payload.link_preview_options, { is_disabled: true });
 });
 
 // --- 429 → retry ----------------------------------------------------------
 
-test('HTTP 429 : attend parameters.retry_after puis réessaie une fois', async () => {
+test('HTTP 429: waits parameters.retry_after then retries once', async () => {
   const tooMany = new Response(
     JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: 3 } }),
     { status: 429 },
@@ -191,11 +191,11 @@ test('HTTP 429 : attend parameters.retry_after puis réessaie une fois', async (
   const retry = mock.calls[1];
   assert.ok(firstTry);
   assert.ok(retry);
-  assert.equal(firstTry.payload.text, retry.payload.text); // même message rejoué
+  assert.equal(firstTry.payload.text, retry.payload.text); // same message replayed
   assert.deepEqual(mock.sleeps, [3000]);
 });
 
-test('non-2xx hors 429 : throw avec la description du body', async () => {
+test('non-2xx other than 429: throws with the body description', async () => {
   const forbidden = new Response(
     JSON.stringify({ ok: false, description: 'Forbidden: bot was blocked' }),
     { status: 403 },
@@ -209,7 +209,7 @@ test('non-2xx hors 429 : throw avec la description du body', async () => {
 
 // --- sendErrorAlert --------------------------------------------------------
 
-test('sendErrorAlert envoie une alerte notifiante avec le message échappé', async () => {
+test('sendErrorAlert sends a notifying alert with the escaped message', async () => {
   const mock = makeMock();
   await sendErrorAlert(config, new Error('refresh <token> & co'), {
     fetchFn: mock.fetchFn,
@@ -220,14 +220,14 @@ test('sendErrorAlert envoie une alerte notifiante avec le message échappé', as
   const call = mock.calls[0];
   assert.ok(call);
   assert.equal(call.payload.disable_notification, false);
-  assert.ok(call.payload.text.startsWith('⚠️ Le bot bookmark-reminder a échoué : '));
+  assert.ok(call.payload.text.startsWith('⚠️ The bookmark-reminder bot failed: '));
   assert.ok(call.payload.text.includes('refresh &lt;token&gt; &amp; co'));
 });
 
-test('sendErrorAlert ne throw jamais, même si l’envoi échoue', async () => {
+test('sendErrorAlert never throws, even if the send fails', async () => {
   const fetchFn: typeof fetch = async () => {
-    throw new Error('réseau coupé');
+    throw new Error('network down');
   };
   const sleepFn = async (): Promise<void> => {};
-  await sendErrorAlert(config, new Error('boom'), { fetchFn, sleepFn }); // ne doit pas rejeter
+  await sendErrorAlert(config, new Error('boom'), { fetchFn, sleepFn }); // must not reject
 });

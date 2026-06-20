@@ -1,6 +1,6 @@
-// Implémentation locale (filesystem) de Storage : tokens.json + state.json à
-// la racine du projet, écrits via atomicWriteFile (tmp + fsync + rename).
-// C'est le chemin launchd/CLI — le Worker a la sienne (Durable Object).
+// Local (filesystem) implementation of Storage: tokens.json + state.json at
+// the project root, written via atomicWriteFile (tmp + fsync + rename).
+// This is the launchd/CLI path — the Worker has its own (Durable Object).
 
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -32,12 +32,12 @@ export class FsStorage implements Storage {
       parsed = JSON.parse(raw);
     } catch {
       throw new Error(
-        `${this.tokensPath} corrompu (JSON invalide) — relance \`npm run auth\` pour le régénérer`,
+        `${this.tokensPath} corrupted (invalid JSON) — rerun \`npm run auth\` to regenerate it`,
       );
     }
     if (!isValidTokens(parsed)) {
       throw new Error(
-        `${this.tokensPath} a une forme inattendue — relance \`npm run auth\` pour le régénérer`,
+        `${this.tokensPath} has an unexpected shape — rerun \`npm run auth\` to regenerate it`,
       );
     }
     return parsed;
@@ -56,7 +56,7 @@ export class FsStorage implements Storage {
       parsed = JSON.parse(readFileSync(this.statePath, 'utf8'));
     } catch (cause) {
       throw new Error(
-        `state.json illisible (JSON corrompu) : ${this.statePath} — le supprimer relancerait un premier run silencieux, vérifier d'abord son contenu`,
+        `state.json unreadable (corrupted JSON): ${this.statePath} — deleting it would silently trigger a fresh first run, check its contents first`,
         { cause },
       );
     }

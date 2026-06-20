@@ -28,20 +28,20 @@ function state(bookmarkIds: string[], likeIds: string[] = []): BotState {
   return { bookmarkIds, likeIds, lastRunAt: '2026-06-11T08:30:00.000Z' };
 }
 
-test('premier run : isFirstRun, aucun nouveau, référence établie', () => {
+test('first run: isFirstRun, no new items, baseline established', () => {
   const { diff, nextState } = computeDiff(null, fetched(['b1', 'b2'], ['l1']), NOW);
 
   assert.equal(diff.isFirstRun, true);
   assert.deepEqual(diff.newBookmarks, []);
   assert.deepEqual(diff.newLikes, []);
-  // les vrais totaux enregistrés sont exposés pour le récap Telegram
+  // the real recorded totals are exposed for the Telegram recap
   assert.deepEqual(diff.trackedCounts, { bookmarks: 2, likes: 1 });
   assert.deepEqual(nextState.bookmarkIds, ['b1', 'b2']);
   assert.deepEqual(nextState.likeIds, ['l1']);
   assert.equal(nextState.lastRunAt, NOW);
 });
 
-test('nouveautés détectées : seuls les ids inconnus sont signalés', () => {
+test('new items detected: only unknown ids are flagged', () => {
   const { diff, nextState } = computeDiff(state(['b1', 'b2']), fetched(['b3', 'b1', 'b2']), NOW);
 
   assert.equal(diff.isFirstRun, false);
@@ -53,35 +53,35 @@ test('nouveautés détectées : seuls les ids inconnus sont signalés', () => {
   assert.deepEqual(nextState.bookmarkIds, ['b3', 'b1', 'b2']);
 });
 
-test('item sorti de la fenêtre puis revenu : pas re-signalé', () => {
-  // run 1 : b1 connu ; run 2 : b1 absent de la fenêtre (toujours bookmarké)
+test('item dropped from the window then back: not re-flagged', () => {
+  // run 1: b1 known; run 2: b1 absent from the window (still bookmarked)
   const afterRun2 = computeDiff(state(['b1']), fetched(['b2']), NOW);
   assert.deepEqual(
     afterRun2.diff.newBookmarks.map((t) => t.id),
     ['b2'],
   );
-  // b1 reste mémorisé après les ids fraîchement vus
+  // b1 stays remembered after the freshly seen ids
   assert.deepEqual(afterRun2.nextState.bookmarkIds, ['b2', 'b1']);
 
-  // run 3 : b1 réapparaît dans la fenêtre → silence
+  // run 3: b1 reappears in the window → silence
   const afterRun3 = computeDiff(afterRun2.nextState, fetched(['b1', 'b2']), NOW);
   assert.deepEqual(afterRun3.diff.newBookmarks, []);
   assert.deepEqual(afterRun3.nextState.bookmarkIds, ['b1', 'b2']);
 });
 
-test('plafond STATE_MAX_IDS : les plus récents survivent', () => {
+test('STATE_MAX_IDS cap: the most recent survive', () => {
   const oldIds = Array.from({ length: STATE_MAX_IDS }, (_, i) => `old-${i}`);
   const { nextState } = computeDiff(state(oldIds), fetched(['fresh-1', 'fresh-2']), NOW);
 
   assert.equal(nextState.bookmarkIds.length, STATE_MAX_IDS);
   assert.deepEqual(nextState.bookmarkIds.slice(0, 2), ['fresh-1', 'fresh-2']);
-  // les 2 plus anciens sont évincés
+  // the 2 oldest are evicted
   assert.ok(!nextState.bookmarkIds.includes(`old-${STATE_MAX_IDS - 1}`));
   assert.ok(!nextState.bookmarkIds.includes(`old-${STATE_MAX_IDS - 2}`));
   assert.ok(nextState.bookmarkIds.includes('old-0'));
 });
 
-test("ordre des nouveautés préservé (ordre API, plus récents d'abord)", () => {
+test('order of new items preserved (API order, most recent first)', () => {
   const { diff } = computeDiff(state(['b9']), fetched(['b3', 'b2', 'b9', 'b1']), NOW);
   assert.deepEqual(
     diff.newBookmarks.map((t) => t.id),
@@ -89,7 +89,7 @@ test("ordre des nouveautés préservé (ordre API, plus récents d'abord)", () =
   );
 });
 
-test('bookmarks et likes diffés indépendamment', () => {
+test('bookmarks and likes diffed independently', () => {
   const previous = state(['shared', 'b-only'], ['l-only']);
   const { diff, nextState } = computeDiff(
     previous,
@@ -97,7 +97,7 @@ test('bookmarks et likes diffés indépendamment', () => {
     NOW,
   );
 
-  // « shared » est connu côté bookmarks mais pas côté likes
+  // "shared" is known on the bookmarks side but not on the likes side
   assert.deepEqual(
     diff.newBookmarks.map((t) => t.id),
     ['b-new'],
@@ -110,7 +110,7 @@ test('bookmarks et likes diffés indépendamment', () => {
   assert.deepEqual(nextState.likeIds, ['shared', 'l-new', 'l-only']);
 });
 
-test('computeDiff est pur : previous et fetched non mutés', () => {
+test('computeDiff is pure: previous and fetched not mutated', () => {
   const previous = state(['b1'], ['l1']);
   const result = fetched(['b2', 'b1'], ['l1']);
   const prevCopy = structuredClone(previous);
@@ -122,12 +122,12 @@ test('computeDiff est pur : previous et fetched non mutés', () => {
   assert.deepEqual(result, fetchedCopy);
 });
 
-test('FsStorage.getState : null si state.json absent', async () => {
+test('FsStorage.getState: null if state.json absent', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'state-test-'));
   assert.equal(await new FsStorage(dir).getState(), null);
 });
 
-test('FsStorage : putState puis getState, aller-retour fidèle', async () => {
+test('FsStorage: putState then getState, faithful round-trip', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'state-test-'));
   const storage = new FsStorage(dir);
   const s = state(['b1', 'b2'], ['l1']);
@@ -136,27 +136,27 @@ test('FsStorage : putState puis getState, aller-retour fidèle', async () => {
   assert.deepEqual(await storage.getState(), s);
 });
 
-test('state.json corrompu (JSON invalide) : throw explicite', async () => {
+test('state.json corrupted (invalid JSON): explicit throw', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'state-test-'));
-  writeFileSync(path.join(dir, 'state.json'), '{ pas du json', 'utf8');
+  writeFileSync(path.join(dir, 'state.json'), '{ not json', 'utf8');
 
-  await assert.rejects(() => new FsStorage(dir).getState(), /state\.json illisible/);
+  await assert.rejects(() => new FsStorage(dir).getState(), /state\.json unreadable/);
 });
 
-test('state.json de forme invalide : throw explicite', async () => {
+test('state.json with invalid shape: explicit throw', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'state-test-'));
   const storage = new FsStorage(dir);
 
   writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ bookmarkIds: 'oops' }), 'utf8');
-  await assert.rejects(() => storage.getState(), /state invalide/);
+  await assert.rejects(() => storage.getState(), /invalid state/);
 
   writeFileSync(
     path.join(dir, 'state.json'),
     JSON.stringify({ bookmarkIds: ['b1'], likeIds: [1, 2] }),
     'utf8',
   );
-  await assert.rejects(() => storage.getState(), /state invalide/);
+  await assert.rejects(() => storage.getState(), /invalid state/);
 
   writeFileSync(path.join(dir, 'state.json'), JSON.stringify([1, 2, 3]), 'utf8');
-  await assert.rejects(() => storage.getState(), /state invalide/);
+  await assert.rejects(() => storage.getState(), /invalid state/);
 });
