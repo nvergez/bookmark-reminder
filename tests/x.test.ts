@@ -93,7 +93,7 @@ test('mapTweets: created_at missing → empty string', () => {
 
 test('decodeApiEntities: decodes & < > and only those, &amp; last', () => {
   assert.equal(decodeApiEntities('R&amp;D &lt;3 a -&gt; b'), 'R&D <3 a -> b');
-  // text literally containing « &lt; » (double-encoded by the API)
+  // text literally containing "&lt;" (double-encoded by the API)
   assert.equal(decodeApiEntities('&amp;lt;'), '&lt;');
   assert.equal(decodeApiEntities('&quot;intact&quot;'), '&quot;intact&quot;');
   assert.equal(decodeApiEntities('no entity'), 'no entity');
@@ -115,6 +115,54 @@ test('mapTweets: decodes the HTML entities returned by the API (text and name)',
   const tweets = mapTweets(payload, 'x.com');
   assert.equal(tweets[0]?.text, 'Q&A on R&D: a < b && b > c <3');
   assert.equal(tweets[0]?.authorName, 'Bell & Labs');
+});
+
+test('mapTweets: note_tweet present → full text used (and decoded)', () => {
+  const payload = {
+    data: [
+      {
+        id: '1810000000000000001',
+        text: 'Start of the long post, truncated by the API… https://t.co/abc123',
+        note_tweet: {
+          text: 'Start of the long post, truncated by the API, then everything beyond the 280 characters — R&amp;D &lt;3 included.',
+        },
+        author_id: '44196397',
+        created_at: '2026-06-11T08:00:00.000Z',
+      },
+    ],
+    includes: { users: [{ id: '44196397', name: 'Elon Musk', username: 'elonmusk' }] },
+    meta: { result_count: 1 },
+  };
+  const tweets = mapTweets(payload, 'x.com');
+  // The full text replaces the truncated `text`, entities decoded as for text.
+  assert.equal(
+    tweets[0]?.text,
+    'Start of the long post, truncated by the API, then everything beyond the 280 characters — R&D <3 included.',
+  );
+});
+
+test('mapTweets: note_tweet absent → text used as-is (behavior unchanged)', () => {
+  const tweets = mapTweets(fullPayload, 'x.com');
+  assert.equal(tweets[0]?.text, 'Ship it. 🚀');
+  assert.equal(
+    tweets[1]?.text,
+    'TypeScript 6.0 beta is out — native type stripping everywhere.',
+  );
+});
+
+test('mapTweets: malformed note_tweet → tweet rejected', () => {
+  assert.throws(
+    () => mapTweets({ data: [{ id: '1', text: 'ok', note_tweet: 'not an object' }] }, 'x.com'),
+    /invalid tweet/,
+  );
+  assert.throws(
+    () => mapTweets({ data: [{ id: '1', text: 'ok', note_tweet: { text: 42 } }] }, 'x.com'),
+    /invalid tweet/,
+  );
+  assert.throws(
+    () => mapTweets({ data: [{ id: '1', text: 'ok', note_tweet: {} }] }, 'x.com'),
+    /invalid tweet/,
+  );
 });
 
 test('mapTweets: custom domain fixupx.com', () => {

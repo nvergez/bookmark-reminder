@@ -31,6 +31,9 @@ export interface Env {
   /** Access secret for the /auth, /run and /admin/* routes
    * (?k=… or Authorization: Bearer header). */
   AUTH_URL_KEY: string;
+  /** OPTIONAL: enables the AI digest summary (PLAN-IA-DIGEST.md §3) —
+   * absent = bot unchanged. `wrangler secret put ANTHROPIC_API_KEY` */
+  ANTHROPIC_API_KEY?: string;
   // Vars (wrangler.jsonc)
   /** Public URL of the Worker, for the re-auth link in alerts. */
   BASE_URL?: string;
@@ -38,6 +41,8 @@ export interface Env {
   DIGEST_PARIS_TIME?: string;
   MAX_RESULTS?: string;
   TWEET_LINK_DOMAIN?: string;
+  /** Claude model for the AI summary (default claude-opus-4-8). */
+  ANTHROPIC_MODEL?: string;
   /** "on" during the local→cloud switchover only (token import/export);
    * switch back to "off" + redeploy once the switchover is done. */
   ADMIN_API?: string;
@@ -73,6 +78,9 @@ function buildConfig(env: Env): Config {
     maxResults: parseMaxResults(env.MAX_RESULTS),
     tweetLinkDomain: env.TWEET_LINK_DOMAIN || 'x.com',
     reauthHint,
+    // OPTIONAL (outside the required check): absent = AI summary off, bot unchanged.
+    anthropicApiKey: env.ANTHROPIC_API_KEY || null,
+    anthropicModel: env.ANTHROPIC_MODEL || 'claude-opus-4-8',
   };
 }
 

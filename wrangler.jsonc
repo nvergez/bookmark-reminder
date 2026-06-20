@@ -19,6 +19,10 @@
     "DIGEST_PARIS_TIME": "08:30",
     "TWEET_LINK_DOMAIN": "x.com",
     "MAX_RESULTS": "25",
+    // Claude model for the AI summary (PLAN-IA-DIGEST.md §3); cheaper
+    // alternatives: claude-sonnet-4-6, claude-haiku-4-5. No effect until the
+    // ANTHROPIC_API_KEY secret is set.
+    "ANTHROPIC_MODEL": "claude-opus-4-8",
     // Public URL of the Worker (known after the 1st deploy): used for the
     // re-auth link in the Telegram alerts. Fill in with YOUR URL
     // https://bookmark-reminder.<subdomain>.workers.dev (empty = generic hint).
@@ -30,5 +34,6 @@
   "observability": { "enabled": true }
   // Secrets to set via `npx wrangler secret put <NAME>`:
   //   X_CLIENT_ID, X_CLIENT_SECRET (if confidential client),
-  //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, AUTH_URL_KEY
+  //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, AUTH_URL_KEY,
+  //   ANTHROPIC_API_KEY (optional — AI summary; absent = bot unchanged)
 }

@@ -18,6 +18,9 @@ interface RawTweet {
   text: string;
   author_id?: string;
   created_at?: string;
+  // Long posts (> 280 chars): `text` is truncated by the API, the full text
+  // arrives in `note_tweet.text` when the field is requested via tweet.fields.
+  note_tweet?: { text: string };
 }
 
 function isRawTweet(value: unknown): value is RawTweet {
@@ -25,6 +28,11 @@ function isRawTweet(value: unknown): value is RawTweet {
   if (typeof value.id !== 'string' || typeof value.text !== 'string') return false;
   if (value.author_id !== undefined && typeof value.author_id !== 'string') return false;
   if (value.created_at !== undefined && typeof value.created_at !== 'string') return false;
+  if (value.note_tweet !== undefined) {
+    // Absent = short post (normal shape); present = object with text:string,
+    // any other shape invalidates the whole tweet.
+    if (!isRecord(value.note_tweet) || typeof value.note_tweet.text !== 'string') return false;
+  }
   return true;
 }
 
@@ -45,11 +53,11 @@ function isRawUser(value: unknown): value is RawUser {
 
 /**
  * The X v2 API returns `text` (and `name`) already HTML-escaped for & < >
- * (historical quirk: « R&D <3 » arrives as « R&amp;D &lt;3 »). We decode
+ * (historical quirk: "R&D <3" arrives as "R&amp;D &lt;3"). We decode
  * here to store the RAW text in Tweet; telegram.ts re-escapes afterwards,
- * otherwise Telegram would display the entities literally (« R&amp;D »).
- * `&amp;` is decoded LAST: a tweet literally containing « &lt; »
- * arrives as « &amp;lt; » and must yield « &lt; » back, not « < ».
+ * otherwise Telegram would display the entities literally ("R&amp;D").
+ * `&amp;` is decoded LAST: a tweet literally containing "&lt;"
+ * arrives as "&amp;lt;" and must yield "&lt;" back, not "<".
  */
 export function decodeApiEntities(s: string): string {
   return s.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
@@ -103,7 +111,9 @@ export function mapTweets(payload: unknown, tweetLinkDomain: string): Tweet[] {
     const authorUsername = author?.username ?? 'i';
     return {
       id: raw.id,
-      text: decodeApiEntities(raw.text),
+      // Long posts: note_tweet.text carries the full text, text is only its
+      // truncated beginning (~280 chars).
+      text: decodeApiEntities(raw.note_tweet?.text ?? raw.text),
       authorUsername,
       authorName: author !== undefined ? decodeApiEntities(author.name) : 'Unknown',
       createdAt: raw.created_at ?? '',
@@ -121,7 +131,7 @@ async function fetchTimeline(
 ): Promise<Tweet[]> {
   const url = new URL(`${API_BASE}/users/${userId}/${endpoint}`);
   url.searchParams.set('max_results', String(config.maxResults));
-  url.searchParams.set('tweet.fields', 'created_at,author_id');
+  url.searchParams.set('tweet.fields', 'created_at,author_id,note_tweet');
   url.searchParams.set('expansions', 'author_id');
   url.searchParams.set('user.fields', 'username,name');
 

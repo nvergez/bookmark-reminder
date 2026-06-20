@@ -108,10 +108,56 @@ Cron: two UTC triggers (`30 6` and `30 7`) straddle the daylight-saving time
 change; the `src/schedule.ts` guard only lets through the one that falls at
 `DIGEST_PARIS_TIME` (08:30 Europe/Paris by default).
 
+**Pre-existing subrequest limit**: the free plan allows 50 external
+subrequests per invocation. In the worst case `MAX_RESULTS=25` (50 items), the
+per-tweet Telegram sends already exceed this cap (~54 calls) — the lever if it
+ever happens: lower `MAX_RESULTS`. The Claude call for the AI summary (next
+section) adds only **one**.
+
 **Re-auth from any browser** (phone included): open
 `https://<worker>.workers.dev/auth?k=<AUTH_URL_KEY>` — the failure alerts on
 Telegram embed this link directly. Cloud→local rollback: see the output of
 `migrate-to-cloud.sh` (symmetric export of tokens + state).
+
+## AI recap summary (optional)
+
+With an Anthropic API key, the morning recap message — the only notifying one —
+gains a thematic summary (2-4 lines) and a "⭐ Read first" block of 1 to 3
+picks, produced by **a single Claude call per day**. Design and trade-offs:
+[PLAN-IA-DIGEST.md](./PLAN-IA-DIGEST.md). Without a key, the bot is strictly
+unchanged.
+
+The key is set **in every environment where the bot runs**:
+
+- **Local**: `ANTHROPIC_API_KEY=sk-ant-…` in `.env`.
+- **Worker**: `npx wrangler secret put ANTHROPIC_API_KEY`.
+
+⚠️ **Duplicate-secret trap**: if only one of the two environments has the key,
+the two runtimes diverge **silently** — the one without a key simply skips the
+summary (status "skipped", not "failed"), and the unavailability line only
+shows up on a call failure. During a local ↔ cloud switchover, set the key on
+both sides (or neither).
+
+### Model choice
+
+`ANTHROPIC_MODEL` (`.env` locally, `vars` in `wrangler.jsonc` on the Worker)
+selects the model — default `claude-opus-4-8`, never silently substituted:
+
+| Model | Input/Output ($/MTok) | Estimated typical month |
+|---|---|---|
+| `claude-opus-4-8` (default) | 5 / 25 | ~$0.40–0.55 |
+| `claude-sonnet-4-6` | 3 / 15 | ~$0.30 |
+| `claude-haiku-4-5` | 1 / 5 | ~$0.10 |
+
+### Strict fail-open
+
+- **Claude failure** (outage, revoked key, timeout…): the digest goes out
+  normally, with the line "*🤖 AI summary unavailable this morning*" — never a
+  dropped digest, never a retry. The exact cause is in the local console (or
+  `npm run worker:tail` on the Worker side).
+- **Days with fewer than 3 unique tweets** (and the first run): call skipped
+  without network — $0, the raw recap is enough, and no unavailability line (a
+  skipped day is not a failure).
 
 ## License
 

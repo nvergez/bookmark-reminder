@@ -40,5 +40,8 @@ export function loadConfig(scope: 'auth' | 'digest' = 'digest'): Config {
     maxResults: parseMaxResults(process.env.MAX_RESULTS),
     tweetLinkDomain: process.env.TWEET_LINK_DOMAIN || 'x.com',
     reauthHint: 're-run `npm run auth` on the bot machine',
+    // OPTIONAL (not in required): absent = AI summary disabled, bot unchanged.
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
+    anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-opus-4-8',
   };
 }

@@ -1,6 +1,8 @@
 // Telegram sender (PLAN.md E4): notifying recap + silent items with
 // rich preview, "nothing new" and silent first run, error alert.
+// The recap is enriched by the AI summary when available (PLAN-IA-DIGEST.md §3).
 
+import type { AiOutcome } from './ai.ts';
 import type { Config, DigestDiff, Tweet } from './types.ts';
 
 /** Injectable dependencies for tests (no network, no real timer). */
@@ -188,9 +190,12 @@ function tweetMessage(prefix: string, tweet: Tweet): OutgoingMessage {
   };
 }
 
-function buildDigestMessages(diff: DigestDiff): OutgoingMessage[] {
+function buildDigestMessages(diff: DigestDiff, aiOutcome: AiOutcome): OutgoingMessage[] {
   const noPreview: LinkPreviewOptions = { is_disabled: true };
 
+  // First run and empty days: behavior unchanged — the AI outcome is
+  // necessarily "skipped" there (enrichDigest skips without a key, on the
+  // first run and under 3 unique tweets), so it is not consulted on these paths.
   if (diff.isFirstRun) {
     // newBookmarks/newLikes are always empty on the first run (computeDiff):
     // the real recorded totals are in trackedCounts.
@@ -217,8 +222,33 @@ function buildDigestMessages(diff: DigestDiff): OutgoingMessage[] {
   if (b > 0) parts.push(`${b} new bookmark${pluralS(b)} 🔖`);
   if (l > 0) parts.push(`${l} new like${pluralS(l)} ❤️`);
 
+  // Counters FIRST: the notification preview stays useful even when enriched.
+  let recap = `☀️ This morning: ${parts.join(', ')}`;
+  if (aiOutcome.status === 'ok') {
+    // EVERY interpolated field goes through escapeHtml (author included); the
+    // URLs come from the client-side resolved Tweet, never from the model
+    // (summary and reasons are defanged and capped on their ESCAPED length in
+    // parseResponse — that's what guarantees a recap < 4096, a single chunk).
+    // Invariant: every <b>/<i> opens AND closes on the same line —
+    // chunkMessage protects entities, not tag pairing (a cut inside a tag =
+    // 400 Telegram).
+    recap += `\n\n🧠 ${escapeHtml(aiOutcome.summary)}`;
+    if (aiOutcome.picks.length > 0) {
+      recap += '\n\n⭐ Read first:';
+      for (const pick of aiOutcome.picks) {
+        recap +=
+          `\n• <b>@${escapeHtml(pick.tweet.authorUsername)}</b> — ${escapeHtml(pick.reason)}` +
+          `\n${pick.tweet.url}`;
+      }
+    }
+  } else if (aiOutcome.status === 'failed') {
+    // Failure ONLY (never "skipped"): no permanent silent degradation on a
+    // revoked key, no false alert on skipped days.
+    recap += '\n\n<i>🤖 AI summary unavailable this morning</i>';
+  }
+
   const messages: OutgoingMessage[] = [
-    { text: `☀️ This morning: ${parts.join(', ')}`, silent: false, linkPreview: noPreview },
+    { text: recap, silent: false, linkPreview: noPreview },
   ];
   for (const tweet of diff.newBookmarks) messages.push(tweetMessage('🔖', tweet));
   for (const tweet of diff.newLikes) messages.push(tweetMessage('❤️', tweet));
@@ -226,11 +256,18 @@ function buildDigestMessages(diff: DigestDiff): OutgoingMessage[] {
 }
 
 /**
- * Sends the digest: notifying recap then one silent message per tweet
- * (bookmarks first). First run and empty days: a single silent message.
+ * Sends the digest: notifying recap (enriched with the AI summary when
+ * available) then one silent message per tweet (bookmarks first). First run
+ * and empty days: a single silent message. The default "skipped" outcome
+ * keeps the two-argument calls byte-identical to the existing ones.
  */
-export async function sendDigest(config: Config, diff: DigestDiff, deps: TelegramDeps = {}): Promise<void> {
-  await sendAll(config, buildDigestMessages(diff), deps);
+export async function sendDigest(
+  config: Config,
+  diff: DigestDiff,
+  aiOutcome: AiOutcome = { status: 'skipped' },
+  deps: TelegramDeps = {},
+): Promise<void> {
+  await sendAll(config, buildDigestMessages(diff, aiOutcome), deps);
 }
 
 /**
