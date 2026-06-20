@@ -1,7 +1,7 @@
-// npm run auth — flow OAuth 2.0 + PKCE (RFC 7636) contre l'API X, en LOCAL.
-// Serveur éphémère sur 127.0.0.1 pour le callback, puis échange du code et
-// écriture de tokens.json. Les briques OAuth partagées (PKCE, URLs, échange)
-// vivent dans oauth.ts — le Worker (worker/index.ts) utilise les mêmes.
+// npm run auth — OAuth 2.0 + PKCE (RFC 7636) flow against the X API, LOCALLY.
+// Ephemeral server on 127.0.0.1 for the callback, then code exchange and
+// writing of tokens.json. The shared OAuth building blocks (PKCE, URLs, exchange)
+// live in oauth.ts — the Worker (worker/index.ts) uses the same ones.
 
 import { spawn } from 'node:child_process';
 import http from 'node:http';
@@ -19,18 +19,18 @@ import {
 import { escapeHtml } from './telegram.ts';
 import type { Config, Tokens } from './types.ts';
 
-// Ré-exports : tests et documentation des constantes du flow local.
+// Re-exports: tests and documentation of the local flow constants.
 export { AUTHORIZE_URL, SCOPES, buildAuthorizeUrl, codeChallengeS256, generateCodeVerifier } from './oauth.ts';
 
-// 127.0.0.1 (pas localhost) : recommandation de la doc X pour le dev local
-// (alignement 2026-06-12, cf. PLAN.md §5 et SPIKE-HOSTING.md §3.5).
+// 127.0.0.1 (not localhost): X docs recommendation for local dev
+// (aligned 2026-06-12, see PLAN.md §5 and SPIKE-HOSTING.md §3.5).
 export const REDIRECT_URI = 'http://127.0.0.1:8765/callback';
 
 const CALLBACK_PORT = 8765;
 const CALLBACK_TIMEOUT_MS = 5 * 60_000;
 
 function htmlPage(title: string, detail: string): string {
-  // detail peut porter le paramètre `error` du callback OAuth : échappé.
+  // detail may carry the `error` parameter from the OAuth callback: escaped.
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head>
 <body style="font-family: system-ui; max-width: 32rem; margin: 4rem auto;">
 <h1>${escapeHtml(title)}</h1><p>${escapeHtml(detail)}</p></body></html>`;
@@ -43,13 +43,13 @@ function respondHtml(res: http.ServerResponse, status: number, html: string): vo
 
 function openInBrowser(url: string): void {
   if (process.platform !== 'darwin') return;
-  // Confort uniquement : si `open` échoue, l'URL affichée suffit.
+  // Convenience only: if `open` fails, the displayed URL is enough.
   try {
     const child = spawn('open', [url], { stdio: 'ignore', detached: true });
     child.on('error', () => {});
     child.unref();
   } catch {
-    // ignoré
+    // ignored
   }
 }
 
@@ -73,11 +73,11 @@ async function runAuthFlow(config: Config): Promise<Tokens> {
       server.close();
       server.closeAllConnections();
       if (outcome.tokens) resolve(outcome.tokens);
-      else reject(outcome.error ?? new Error('Flow OAuth interrompu'));
+      else reject(outcome.error ?? new Error('OAuth flow interrupted'));
     };
 
     const timer = setTimeout(() => {
-      finish({ error: new Error('Aucun callback OAuth reçu en 5 minutes — flow abandonné') });
+      finish({ error: new Error('No OAuth callback received within 5 minutes — flow aborted') });
     }, CALLBACK_TIMEOUT_MS);
 
     async function handleRequest(
@@ -87,31 +87,31 @@ async function runAuthFlow(config: Config): Promise<Tokens> {
       const url = new URL(req.url ?? '/', `http://127.0.0.1:${CALLBACK_PORT}`);
       if (url.pathname !== '/callback') {
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('Introuvable');
+        res.end('Not found');
         return;
       }
 
       const oauthError = url.searchParams.get('error');
       if (oauthError) {
-        respondHtml(res, 400, htmlPage('Autorisation refusée', `X a renvoyé : ${oauthError}`));
-        finish({ error: new Error(`Autorisation refusée par X : ${oauthError}`) });
+        respondHtml(res, 400, htmlPage('Authorization denied', `X returned: ${oauthError}`));
+        finish({ error: new Error(`Authorization denied by X: ${oauthError}`) });
         return;
       }
       if (url.searchParams.get('state') !== state) {
         respondHtml(
           res,
           400,
-          htmlPage('Paramètre state invalide', 'Le callback ne correspond pas à cette session.'),
+          htmlPage('Invalid state parameter', 'The callback does not match this session.'),
         );
         finish({
-          error: new Error('Paramètre state inattendu dans le callback (possible CSRF) — flow abandonné'),
+          error: new Error('Unexpected state parameter in the callback (possible CSRF) — flow aborted'),
         });
         return;
       }
       const code = url.searchParams.get('code');
       if (!code) {
-        respondHtml(res, 400, htmlPage('Callback invalide', 'Paramètre code manquant.'));
-        finish({ error: new Error('Callback sans paramètre code — flow abandonné') });
+        respondHtml(res, 400, htmlPage('Invalid callback', 'Missing code parameter.'));
+        finish({ error: new Error('Callback without a code parameter — flow aborted') });
         return;
       }
 
@@ -120,7 +120,7 @@ async function runAuthFlow(config: Config): Promise<Tokens> {
         respondHtml(
           res,
           200,
-          htmlPage('Autorisation réussie ✅', 'Tu peux fermer cet onglet et revenir au terminal.'),
+          htmlPage('Authorization successful ✅', 'You can close this tab and return to the terminal.'),
         );
         finish({ tokens });
       } catch (err) {
@@ -128,7 +128,7 @@ async function runAuthFlow(config: Config): Promise<Tokens> {
         respondHtml(
           res,
           500,
-          htmlPage('Échec de l’échange du code ❌', 'Détails dans le terminal.'),
+          htmlPage('Code exchange failed ❌', 'Details in the terminal.'),
         );
         finish({ error: new Error(message) });
       }
@@ -137,15 +137,15 @@ async function runAuthFlow(config: Config): Promise<Tokens> {
     server.on('error', (err) => {
       finish({
         error: new Error(
-          `Serveur de callback impossible sur 127.0.0.1:${CALLBACK_PORT} : ${err.message} — un autre process occupe peut-être le port`,
+          `Could not start callback server on 127.0.0.1:${CALLBACK_PORT}: ${err.message} — another process may be occupying the port`,
         ),
       });
     });
 
     server.listen(CALLBACK_PORT, '127.0.0.1', () => {
-      console.log('Ouvre cette URL dans un navigateur pour autoriser le bot :\n');
+      console.log('Open this URL in a browser to authorize the bot:\n');
       console.log(`  ${authorizeUrl}\n`);
-      console.log(`En attente du callback sur ${REDIRECT_URI} (5 min max)…`);
+      console.log(`Waiting for the callback on ${REDIRECT_URI} (5 min max)…`);
       openInBrowser(authorizeUrl);
     });
   });
@@ -156,21 +156,21 @@ async function main(): Promise<void> {
   const storage = new FsStorage(PROJECT_ROOT);
   const tokens = await runAuthFlow(config);
   await storage.putTokens(tokens);
-  console.log(`\nAuthentification réussie pour @${tokens.username ?? '?'} (id ${tokens.userId}).`);
+  console.log(`\nAuthentication successful for @${tokens.username ?? '?'} (id ${tokens.userId}).`);
   console.log(
-    `Access token valable jusqu'au ${new Date(tokens.expiresAt).toLocaleString('fr-FR')}.`,
+    `Access token valid until ${new Date(tokens.expiresAt).toLocaleString('fr-FR')}.`,
   );
-  console.log(`Tokens enregistrés dans ${storage.tokensPath}.`);
+  console.log(`Tokens saved to ${storage.tokensPath}.`);
 }
 
-// Exécution uniquement en script direct (`npm run auth`), pas à l'import
-// (les tests importent les helpers purs ré-exportés ci-dessus).
+// Runs only as a direct script (`npm run auth`), not on import
+// (the tests import the pure helpers re-exported above).
 const isMain =
   process.argv[1] !== undefined &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   main().catch((err: unknown) => {
-    console.error(`Échec de l'authentification : ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`Authentication failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
   });
 }

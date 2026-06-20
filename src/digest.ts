@@ -1,6 +1,6 @@
-// Adaptateur LOCAL du run quotidien : config .env + FsStorage + sortie
-// console/exit codes pour launchd. Le cœur du run est dans run.ts (partagé
-// avec le Worker Cloudflare). Exécuté par `npm run digest`.
+// LOCAL adapter for the daily run: .env config + FsStorage + console output /
+// exit codes for launchd. The core of the run lives in run.ts (shared with the
+// Cloudflare Worker). Run by `npm run digest`.
 
 import { loadConfig, PROJECT_ROOT } from './config.ts';
 import { FsStorage } from './fsStorage.ts';
@@ -13,10 +13,10 @@ async function main(): Promise<void> {
   try {
     config = loadConfig('digest');
   } catch (err) {
-    // Pas de config → pas de Telegram possible : seul le log launchd témoigne.
-    // Message seul (pas de stack) : l'erreur est actionnable telle quelle.
+    // No config → Telegram isn't possible: only the launchd log bears witness.
+    // Message only (no stack): the error is actionable as is.
     console.error(
-      `Échec du chargement de la configuration : ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to load configuration: ${err instanceof Error ? err.message : String(err)}`,
     );
     process.exit(1);
   }
@@ -25,8 +25,8 @@ async function main(): Promise<void> {
     const summary = await runDigest(config, new FsStorage(PROJECT_ROOT));
     console.log(`Digest OK — ${summary}`);
   } catch (err) {
-    console.error('Échec du run digest :', err instanceof Error ? (err.stack ?? err.message) : err);
-    // Best-effort, ne throw jamais : la panne reste visible côté Telegram (PLAN.md §1).
+    console.error('Digest run failed:', err instanceof Error ? (err.stack ?? err.message) : err);
+    // Best-effort, never throws: the failure stays visible on the Telegram side (PLAN.md §1).
     await sendErrorAlert(config, err);
     process.exit(1);
   }

@@ -1,4 +1,4 @@
-// Tests des helpers purs de l'auth OAuth 2.0 + PKCE (aucun réseau, aucun fichier).
+// Tests for the pure OAuth 2.0 + PKCE auth helpers (no network, no files).
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -20,33 +20,33 @@ import type { Tokens } from '../src/types.ts';
 
 // --- PKCE ---
 
-test('generateCodeVerifier : longueur dans la fenêtre RFC 7636 (43-128)', () => {
+test('generateCodeVerifier: length within the RFC 7636 window (43-128)', () => {
   const verifier = generateCodeVerifier();
-  assert.ok(verifier.length >= 43 && verifier.length <= 128, `longueur ${verifier.length}`);
+  assert.ok(verifier.length >= 43 && verifier.length <= 128, `length ${verifier.length}`);
 });
 
-test('generateCodeVerifier : alphabet unreserved uniquement (base64url)', () => {
+test('generateCodeVerifier: unreserved alphabet only (base64url)', () => {
   const verifier = generateCodeVerifier();
   assert.match(verifier, /^[A-Za-z0-9\-._~]+$/);
 });
 
-test('generateCodeVerifier : aléatoire (deux appels diffèrent)', () => {
+test('generateCodeVerifier: random (two calls differ)', () => {
   assert.notEqual(generateCodeVerifier(), generateCodeVerifier());
 });
 
-test('codeChallengeS256 : conforme au vecteur de la RFC 7636 (annexe B)', async () => {
+test('codeChallengeS256: matches the RFC 7636 test vector (appendix B)', async () => {
   const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
   assert.equal(await codeChallengeS256(verifier), 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
 });
 
-test('codeChallengeS256 : base64url sans padding ni caractères base64 classiques', async () => {
+test('codeChallengeS256: base64url with no padding or classic base64 characters', async () => {
   const challenge = await codeChallengeS256(generateCodeVerifier());
-  assert.equal(challenge.length, 43); // sha256 = 32 octets → 43 chars base64url
+  assert.equal(challenge.length, 43); // sha256 = 32 bytes → 43 base64url chars
   assert.match(challenge, /^[A-Za-z0-9\-_]+$/);
   assert.ok(!challenge.includes('='));
 });
 
-test("buildAuthorizeUrl : tous les paramètres OAuth attendus", () => {
+test("buildAuthorizeUrl: all expected OAuth parameters", () => {
   const url = new URL(buildAuthorizeUrl('client-123', 'state-abc', 'challenge-xyz', REDIRECT_URI));
   assert.equal(url.origin + url.pathname, 'https://x.com/i/oauth2/authorize');
   assert.equal(url.searchParams.get('response_type'), 'code');
@@ -58,7 +58,7 @@ test("buildAuthorizeUrl : tous les paramètres OAuth attendus", () => {
   assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
 });
 
-// --- Expiration ---
+// --- Expiry ---
 
 const baseTokens: Tokens = {
   accessToken: 'at',
@@ -67,21 +67,21 @@ const baseTokens: Tokens = {
   userId: '42',
 };
 
-test('isExpired : faux loin de l’expiration', () => {
+test('isExpired: false well before expiry', () => {
   assert.equal(isExpired(baseTokens, baseTokens.expiresAt - EXPIRY_MARGIN_MS - 1), false);
 });
 
-test('isExpired : vrai dans la marge de 60 s', () => {
+test('isExpired: true within the 60 s margin', () => {
   assert.equal(isExpired(baseTokens, baseTokens.expiresAt - EXPIRY_MARGIN_MS + 1), true);
 });
 
-test('isExpired : vrai une fois expiré', () => {
+test('isExpired: true once expired', () => {
   assert.equal(isExpired(baseTokens, baseTokens.expiresAt + 1), true);
 });
 
-// --- Mapping réponse token ---
+// --- Token response mapping ---
 
-test('parseTokenResponse : mappe access_token, refresh_token et expires_in', () => {
+test('parseTokenResponse: maps access_token, refresh_token and expires_in', () => {
   const now = 1_700_000_000_000;
   const parsed = parseTokenResponse(
     { access_token: 'new-at', refresh_token: 'new-rt', expires_in: 7200, token_type: 'bearer' },
@@ -94,34 +94,34 @@ test('parseTokenResponse : mappe access_token, refresh_token et expires_in', () 
   });
 });
 
-test('parseTokenResponse : conserve le fallback si refresh_token absent', () => {
+test('parseTokenResponse: keeps the fallback when refresh_token is absent', () => {
   const parsed = parseTokenResponse({ access_token: 'at', expires_in: 60 }, 0, 'old-rt');
   assert.equal(parsed.refreshToken, 'old-rt');
 });
 
-test('parseTokenResponse : rejette refresh_token absent sans fallback', () => {
+test('parseTokenResponse: rejects absent refresh_token without fallback', () => {
   assert.throws(
     () => parseTokenResponse({ access_token: 'at', expires_in: 60 }, 0),
     /refresh_token/,
   );
 });
 
-test('parseTokenResponse : rejette access_token manquant ou payload non-objet', () => {
+test('parseTokenResponse: rejects missing access_token or non-object payload', () => {
   assert.throws(() => parseTokenResponse({ expires_in: 60, refresh_token: 'rt' }, 0), /access_token/);
-  assert.throws(() => parseTokenResponse('oops', 0), /objet JSON/);
-  assert.throws(() => parseTokenResponse(null, 0), /objet JSON/);
+  assert.throws(() => parseTokenResponse('oops', 0), /JSON object/);
+  assert.throws(() => parseTokenResponse(null, 0), /JSON object/);
 });
 
-test('parseTokenResponse : rejette expires_in manquant', () => {
+test('parseTokenResponse: rejects missing expires_in', () => {
   assert.throws(
     () => parseTokenResponse({ access_token: 'at', refresh_token: 'rt' }, 0),
     /expires_in/,
   );
 });
 
-// --- Requête token (client public vs confidentiel) ---
+// --- Token request (public vs confidential client) ---
 
-test('buildTokenRequest : client public → client_id dans le body, pas d’Authorization', () => {
+test('buildTokenRequest: public client → client_id in the body, no Authorization', () => {
   const { headers, body } = buildTokenRequest(
     { xClientId: 'cid', xClientSecret: null },
     { grant_type: 'refresh_token', refresh_token: 'rt' },
@@ -134,7 +134,7 @@ test('buildTokenRequest : client public → client_id dans le body, pas d’Auth
   assert.equal(headers['Authorization'], undefined);
 });
 
-test('buildTokenRequest : client confidentiel → Basic auth, pas de client_id dans le body', () => {
+test('buildTokenRequest: confidential client → Basic auth, no client_id in the body', () => {
   const { headers, body } = buildTokenRequest(
     { xClientId: 'cid', xClientSecret: 'secret' },
     { grant_type: 'authorization_code', code: 'c' },
@@ -147,14 +147,14 @@ test('buildTokenRequest : client confidentiel → Basic auth, pas de client_id d
   );
 });
 
-// --- Forme de tokens.json ---
+// --- tokens.json shape ---
 
-test('isValidTokens : accepte la forme nominale, avec ou sans username', () => {
+test('isValidTokens: accepts the nominal shape, with or without username', () => {
   assert.equal(isValidTokens(baseTokens), true);
   assert.equal(isValidTokens({ ...baseTokens, username: 'alice' }), true);
 });
 
-test('isValidTokens : rejette les formes invalides', () => {
+test('isValidTokens: rejects invalid shapes', () => {
   assert.equal(isValidTokens(null), false);
   assert.equal(isValidTokens('x'), false);
   assert.equal(isValidTokens({ ...baseTokens, accessToken: '' }), false);

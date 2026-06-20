@@ -1,14 +1,14 @@
 {
-  // Worker Cloudflare du bot (PLAN.md E6 ; architecture : SPIKE-HOSTING.md §4)
+  // Cloudflare Worker for the bot (PLAN.md E6; architecture: SPIKE-HOSTING.md §4)
   "name": "bookmark-reminder",
   "main": "worker/index.ts",
   "compatibility_date": "2026-05-01",
   "triggers": {
-    // Double cron UTC : 8h30 Europe/Paris été (UTC+2) et hiver (UTC+1).
-    // La garde isLocalTime (src/schedule.ts) ignore la mauvaise branche.
-    // ⚠️ Couplé à DIGEST_PARIS_TIME : changer l'heure du digest exige
-    // d'aligner les DEUX crons (mêmes minutes), sinon plus aucune branche
-    // ne matche et le digest est silencieusement désactivé.
+    // Double UTC cron: 8:30 Europe/Paris in summer (UTC+2) and winter (UTC+1).
+    // The isLocalTime guard (src/schedule.ts) ignores the wrong branch.
+    // ⚠️ Coupled to DIGEST_PARIS_TIME: changing the digest time requires
+    // aligning BOTH crons (same minutes), otherwise no branch
+    // matches anymore and the digest is silently disabled.
     "crons": ["30 6 * * *", "30 7 * * *"]
   },
   "durable_objects": {
@@ -19,21 +19,21 @@
     "DIGEST_PARIS_TIME": "08:30",
     "TWEET_LINK_DOMAIN": "x.com",
     "MAX_RESULTS": "25",
-    // Modèle Claude du résumé IA (PLAN-IA-DIGEST.md §3) ; alternatives moins
-    // chères : claude-sonnet-4-6, claude-haiku-4-5. Sans effet tant que le
-    // secret ANTHROPIC_API_KEY n'est pas posé.
+    // Claude model for the AI summary (PLAN-IA-DIGEST.md §3); cheaper
+    // alternatives: claude-sonnet-4-6, claude-haiku-4-5. No effect until the
+    // ANTHROPIC_API_KEY secret is set.
     "ANTHROPIC_MODEL": "claude-opus-4-8",
-    // URL publique du Worker (connue après le 1er deploy) : sert au lien de
-    // re-auth dans les alertes Telegram. À renseigner avec VOTRE URL
-    // https://bookmark-reminder.<sous-domaine>.workers.dev (vide = hint générique).
+    // Public URL of the Worker (known after the 1st deploy): used for the
+    // re-auth link in the Telegram alerts. Fill in with YOUR URL
+    // https://bookmark-reminder.<subdomain>.workers.dev (empty = generic hint).
     "BASE_URL": "",
-    // « on » pendant la bascule local→cloud uniquement (routes /admin/*) ;
-    // repasser à « off » + redéployer une fois la bascule terminée.
+    // "on" during the local→cloud switch only (/admin/* routes);
+    // set back to "off" + redeploy once the switch is complete.
     "ADMIN_API": "off"
   },
   "observability": { "enabled": true }
-  // Secrets à poser via `npx wrangler secret put <NOM>` :
-  //   X_CLIENT_ID, X_CLIENT_SECRET (si client confidentiel),
+  // Secrets to set via `npx wrangler secret put <NAME>`:
+  //   X_CLIENT_ID, X_CLIENT_SECRET (if confidential client),
   //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, AUTH_URL_KEY,
-  //   ANTHROPIC_API_KEY (optionnel — résumé IA ; absent = bot inchangé)
+  //   ANTHROPIC_API_KEY (optional — AI summary; absent = bot unchanged)
 }

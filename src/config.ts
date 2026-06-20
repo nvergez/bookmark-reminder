@@ -1,5 +1,5 @@
-// Chargement de la config LOCALE (.env à la racine du projet). Le Worker
-// construit son Config depuis ses bindings (worker/index.ts), sans ce module.
+// Loading the LOCAL config (.env at the project root). The Worker
+// builds its Config from its bindings (worker/index.ts), without this module.
 
 import path from 'node:path';
 import { parseMaxResults } from './maxResults.ts';
@@ -10,15 +10,15 @@ export { parseMaxResults };
 export const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
 
 /**
- * Charge .env (s'il existe) puis valide les variables requises.
- * scope 'auth' : seul X_CLIENT_ID est requis (npm run auth peut tourner
- * avant la création du bot Telegram).
+ * Loads .env (if it exists) then validates the required variables.
+ * scope 'auth': only X_CLIENT_ID is required (npm run auth can run
+ * before the Telegram bot is created).
  */
 export function loadConfig(scope: 'auth' | 'digest' = 'digest'): Config {
   try {
     process.loadEnvFile(path.join(PROJECT_ROOT, '.env'));
   } catch {
-    // pas de .env : les variables peuvent venir de l'environnement
+    // no .env: variables may come from the environment
   }
 
   const required =
@@ -28,7 +28,7 @@ export function loadConfig(scope: 'auth' | 'digest' = 'digest'): Config {
   const missing = required.filter((name) => !process.env[name]);
   if (missing.length > 0) {
     throw new Error(
-      `Variables manquantes dans .env : ${missing.join(', ')} — copier .env.example vers .env et le remplir (PLAN.md §3)`,
+      `Missing variables in .env: ${missing.join(', ')} — copy .env.example to .env and fill it in (PLAN.md §3)`,
     );
   }
 
@@ -39,8 +39,8 @@ export function loadConfig(scope: 'auth' | 'digest' = 'digest'): Config {
     telegramChatId: process.env.TELEGRAM_CHAT_ID ?? '',
     maxResults: parseMaxResults(process.env.MAX_RESULTS),
     tweetLinkDomain: process.env.TWEET_LINK_DOMAIN || 'x.com',
-    reauthHint: 'relance `npm run auth` sur la machine du bot',
-    // OPTIONNEL (hors required) : absent = résumé IA désactivé, bot inchangé.
+    reauthHint: 're-run `npm run auth` on the bot machine',
+    // OPTIONAL (not in required): absent = AI summary disabled, bot unchanged.
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
     anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-opus-4-8',
   };

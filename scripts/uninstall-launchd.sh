@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Désinstalle l'agent launchd du digest. Idempotent.
+# Uninstalls the digest's launchd agent. Idempotent.
 set -euo pipefail
 
 LABEL="com.bookmark-reminder"
@@ -8,4 +8,4 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
 rm -f "$PLIST"
 
-echo "Agent $LABEL désinstallé (plist supprimé, tâche déchargée)."
+echo "Agent $LABEL uninstalled (plist removed, task unloaded)."

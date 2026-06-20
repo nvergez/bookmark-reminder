@@ -1,9 +1,9 @@
-// Cœur du run quotidien (PLAN.md §2), partagé local/Worker : auth → fetch →
-// diff → enrichissement IA → envoi → persistance. Aucun import node:*, aucune
-// sortie console — l'appelant (digest.ts ou le Durable Object) logge le résumé
-// retourné, qui porte aussi le statut IA.
+// Core of the daily run (PLAN.md §2), shared local/Worker: auth → fetch →
+// diff → AI enrichment → send → persistence. No node:* imports, no console
+// output — the caller (digest.ts or the Durable Object) logs the returned
+// summary, which also carries the AI status.
 
-import { enrichirDigest, type AiDeps, type AiOutcome } from './ai.ts';
+import { enrichDigest, type AiDeps, type AiOutcome } from './ai.ts';
 import { computeDiff } from './state.ts';
 import type { Storage } from './storage.ts';
 import { sendDigest, type TelegramDeps } from './telegram.ts';
@@ -25,35 +25,35 @@ export async function runDigest(
   const previousState = await storage.getState();
   const { diff, nextState } = computeDiff(previousState, fetched, new Date().toISOString());
 
-  // Enrichissement IA fail-open (PLAN-IA-DIGEST.md §3) : enrichirDigest gère
-  // « sauté » en interne et capture ses propres erreurs — ce try/catch est le
-  // dernier filet contre une exception imprévue. Un échec Claude ne supprime
-  // jamais le digest ni ne bloque putState.
+  // Fail-open AI enrichment (PLAN-IA-DIGEST.md §3): enrichDigest handles
+  // "skipped" internally and captures its own errors — this try/catch is the
+  // last net against an unforeseen exception. A Claude failure never removes
+  // the digest nor blocks putState.
   let aiOutcome: AiOutcome;
   try {
-    aiOutcome = await enrichirDigest(config, diff, aiDeps);
+    aiOutcome = await enrichDigest(config, diff, aiDeps);
   } catch (err) {
-    aiOutcome = { statut: 'echec', raison: err instanceof Error ? err.message : String(err) };
+    aiOutcome = { status: 'failed', reason: err instanceof Error ? err.message : String(err) };
   }
 
   await sendDigest(config, diff, aiOutcome, telegramDeps);
 
-  // Persisté APRÈS l'envoi réussi : si Telegram échoue, on re-signalera
-  // les mêmes items demain (un doublon vaut mieux qu'un trou).
+  // Persisted AFTER a successful send: if Telegram fails, we'll re-report
+  // the same items tomorrow (a duplicate beats a gap).
   await storage.putState(nextState);
 
   const durationS = ((Date.now() - startedAt) / 1000).toFixed(1);
   const summary = diff.isFirstRun
-    ? `premier run : référence établie (${diff.trackedCounts.bookmarks} bookmarks, ${diff.trackedCounts.likes} likes vus)`
-    : `${diff.newBookmarks.length} nouveau(x) bookmark(s), ${diff.newLikes.length} nouveau(x) like(s)`;
-  // Suffixe de statut IA : la console locale et `wrangler tail` portent la
-  // cause d'un échec sans console.* ici. Rien quand « sauté » : les chaînes
-  // actuelles restent octet-identiques.
-  const statutIa =
-    aiOutcome.statut === 'ok'
-      ? ' — résumé IA : ok'
-      : aiOutcome.statut === 'echec'
-        ? ` — résumé IA : échec (${aiOutcome.raison})`
+    ? `first run: baseline established (${diff.trackedCounts.bookmarks} bookmarks, ${diff.trackedCounts.likes} likes seen)`
+    : `${diff.newBookmarks.length} new bookmark(s), ${diff.newLikes.length} new like(s)`;
+  // AI status suffix: the local console and `wrangler tail` carry the cause
+  // of a failure without console.* here. Nothing when "skipped": the current
+  // strings stay byte-identical.
+  const aiStatus =
+    aiOutcome.status === 'ok'
+      ? ' — AI summary: ok'
+      : aiOutcome.status === 'failed'
+        ? ` — AI summary: failed (${aiOutcome.reason})`
         : '';
-  return `${summary} — ${durationS} s${statutIa}`;
+  return `${summary} — ${durationS} s${aiStatus}`;
 }

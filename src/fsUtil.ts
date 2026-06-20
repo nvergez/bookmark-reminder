@@ -1,12 +1,12 @@
 import { closeSync, fsyncSync, openSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 
 /**
- * Écriture atomique : tmp + fsync + rename sur le même volume.
- * Indispensable pour tokens.json (refresh token X à usage unique : une
- * écriture partielle = re-auth manuelle, PLAN.md §6) et utile pour state.json.
- * Mode 0600 : ces fichiers contiennent des secrets ou des données privées.
- * En cas d'échec (disque plein, rename impossible…), le tmp est supprimé :
- * il contiendrait des secrets dans le répertoire versionné.
+ * Atomic write: tmp + fsync + rename on the same volume.
+ * Essential for tokens.json (single-use X refresh token: a partial write means
+ * manual re-auth, PLAN.md §6) and useful for state.json.
+ * Mode 0600: these files contain secrets or private data.
+ * On failure (disk full, rename impossible...), the temporary file is removed:
+ * it would otherwise hold secrets in the version-controlled directory.
  */
 export function atomicWriteFile(filePath: string, content: string): void {
   const tmpPath = `${filePath}.tmp-${process.pid}`;
@@ -23,7 +23,7 @@ export function atomicWriteFile(filePath: string, content: string): void {
     try {
       unlinkSync(tmpPath);
     } catch {
-      // best effort : l'erreur d'origine prime
+      // best effort: the original error takes precedence
     }
     throw err;
   }

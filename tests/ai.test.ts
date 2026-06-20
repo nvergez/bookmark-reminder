@@ -1,9 +1,9 @@
-// Tests purs du module IA : aucun réseau, fetch injecté (façon telegram.test.ts).
+// Pure tests of the AI module: no network, fetch injected (like telegram.test.ts).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { construirePrompt, dedupliquerTweets, enrichirDigest, parseReponse } from '../src/ai.ts';
-import type { TweetUnique } from '../src/ai.ts';
+import { buildPrompt, dedupeTweets, enrichDigest, parseResponse } from '../src/ai.ts';
+import type { UniqueTweet } from '../src/ai.ts';
 import { escapeHtml } from '../src/telegram.ts';
 import type { Config, DigestDiff, Tweet } from '../src/types.ts';
 
@@ -19,7 +19,7 @@ const config: Config = {
   anthropicModel: 'claude-opus-4-8',
 };
 
-/** Forme du corps de requête envoyé à l'API Anthropic (champs consommés ici). */
+/** Shape of the request body sent to the Anthropic API (fields consumed here). */
 interface AnthropicPayload {
   model: string;
   max_tokens: number;
@@ -28,7 +28,7 @@ interface AnthropicPayload {
   output_config: { format: { type: string; schema: Record<string, unknown> } };
 }
 
-/** Mock fetch : enregistre URL/headers/payload, sert une file de réponses. */
+/** Mock fetch: records URL/headers/payload, serves a queue of responses. */
 function makeMock(queue: Response[] = []) {
   const calls: { url: string; headers: Record<string, string>; payload: AnthropicPayload }[] = [];
   const fetchFn: typeof fetch = async (input, init) => {
@@ -38,17 +38,17 @@ function makeMock(queue: Response[] = []) {
       payload: JSON.parse(String(init?.body)) as AnthropicPayload,
     });
     const next = queue.shift();
-    if (next === undefined) throw new Error('mock fetch : aucune réponse en file');
+    if (next === undefined) throw new Error('mock fetch: no response in queue');
     return next;
   };
   return { calls, fetchFn };
 }
 
-/** Réponse Anthropic dont le bloc texte porte la sortie structurée donnée. */
-function reponseStructuree(sortie: unknown, stopReason = 'end_turn'): Response {
+/** Anthropic response whose text block carries the given structured output. */
+function structuredResponse(output: unknown, stopReason = 'end_turn'): Response {
   return new Response(
     JSON.stringify({
-      content: [{ type: 'text', text: JSON.stringify(sortie) }],
+      content: [{ type: 'text', text: JSON.stringify(output) }],
       stop_reason: stopReason,
     }),
     { status: 200 },
@@ -76,128 +76,128 @@ function diff(partial: Partial<DigestDiff>): DigestDiff {
   };
 }
 
-/** Diff avec n bookmarks uniques d'ids '1'..'n'. */
-function diffAvecUniques(n: number): DigestDiff {
+/** Diff with n unique bookmarks of ids '1'..'n'. */
+function diffWithUniques(n: number): DigestDiff {
   const bookmarks: Tweet[] = [];
-  for (let i = 1; i <= n; i += 1) bookmarks.push(tweet(String(i), `tweet numéro ${i}`));
+  for (let i = 1; i <= n; i += 1) bookmarks.push(tweet(String(i), `tweet number ${i}`));
   return diff({ newBookmarks: bookmarks });
 }
 
-function unique(t: Tweet, bookmarkEtLike = false): TweetUnique {
-  return { tweet: t, bookmarkEtLike };
+function unique(t: Tweet, bookmarkedAndLiked = false): UniqueTweet {
+  return { tweet: t, bookmarkedAndLiked };
 }
 
-function compterOccurrences(haystack: string, needle: string): number {
+function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
-// --- dedupliquerTweets ----------------------------------------------------
+// --- dedupeTweets ---------------------------------------------------------
 
-test('dedupliquerTweets fusionne un id présent en bookmark ET en like', () => {
-  const uniques = dedupliquerTweets({
-    newBookmarks: [tweet('1', 'premier'), tweet('2', 'second')],
-    newLikes: [tweet('2', 'second'), tweet('3', 'troisième')],
+test('dedupeTweets merges an id present both as bookmark AND like', () => {
+  const uniques = dedupeTweets({
+    newBookmarks: [tweet('1', 'first'), tweet('2', 'second')],
+    newLikes: [tweet('2', 'second'), tweet('3', 'third')],
   });
   assert.deepEqual(
     uniques.map((u) => u.tweet.id),
-    ['1', '2', '3'], // ordre conservé : bookmarks d'abord, puis likes inédits
+    ['1', '2', '3'], // order preserved: bookmarks first, then likes not already seen
   );
   assert.deepEqual(
-    uniques.map((u) => u.bookmarkEtLike),
+    uniques.map((u) => u.bookmarkedAndLiked),
     [false, true, false],
   );
 });
 
-// --- construirePrompt -----------------------------------------------------
+// --- buildPrompt ----------------------------------------------------------
 
-test('construirePrompt numérote 1..N et inclut l’auteur', () => {
-  const prompt = construirePrompt([unique(tweet('1', 'un texte')), unique(tweet('2', 'autre'))]);
-  assert.ok(prompt.includes('1. @alice (Alice & Co <3>)\nun texte'));
-  assert.ok(prompt.includes('2. @alice (Alice & Co <3>)\nautre'));
-  assert.ok(prompt.includes('(2)')); // compte des tweets dans l'en-tête
+test('buildPrompt numbers 1..N and includes the author', () => {
+  const prompt = buildPrompt([unique(tweet('1', 'some text')), unique(tweet('2', 'other'))]);
+  assert.ok(prompt.includes('1. @alice (Alice & Co <3>)\nsome text'));
+  assert.ok(prompt.includes('2. @alice (Alice & Co <3>)\nother'));
+  assert.ok(prompt.includes('(2)')); // tweet count in the header
 });
 
-test('construirePrompt marque l’entrée unique « bookmarké + liké »', () => {
-  const prompt = construirePrompt([unique(tweet('1', 'un'), true), unique(tweet('2', 'deux'))]);
-  assert.equal(compterOccurrences(prompt, '(bookmarké + liké)'), 1);
-  assert.ok(prompt.includes('1. @alice (Alice & Co <3>) (bookmarké + liké)'));
+test('buildPrompt marks the unique entry "bookmarked + liked"', () => {
+  const prompt = buildPrompt([unique(tweet('1', 'one'), true), unique(tweet('2', 'two'))]);
+  assert.equal(countOccurrences(prompt, '(bookmarked + liked)'), 1);
+  assert.ok(prompt.includes('1. @alice (Alice & Co <3>) (bookmarked + liked)'));
 });
 
-test('construirePrompt tronque chaque texte de tweet à ~2000 chars avec marqueur …', () => {
-  const prompt = construirePrompt([unique(tweet('1', 'a'.repeat(2500)))]);
+test('buildPrompt truncates each tweet text to ~2000 chars with a … marker', () => {
+  const prompt = buildPrompt([unique(tweet('1', 'a'.repeat(2500)))]);
   assert.ok(prompt.includes('a'.repeat(2000) + '…'));
   assert.ok(!prompt.includes('a'.repeat(2001)));
 });
 
-// --- parseReponse (cas directs) --------------------------------------------
+// --- parseResponse (direct cases) ------------------------------------------
 
-test('parseReponse : corps non-JSON → echec', () => {
-  const outcome = parseReponse(200, 'pas du json', []);
-  assert.ok(outcome.statut === 'echec');
-  assert.match(outcome.raison, /non-JSON/);
+test('parseResponse: non-JSON body → failed', () => {
+  const outcome = parseResponse(200, 'not json', []);
+  assert.ok(outcome.status === 'failed');
+  assert.match(outcome.reason, /non-JSON/);
 });
 
-test('parseReponse : pas de bloc de texte → echec', () => {
-  const outcome = parseReponse(200, JSON.stringify({ content: [], stop_reason: 'end_turn' }), []);
-  assert.ok(outcome.statut === 'echec');
-  assert.match(outcome.raison, /bloc de texte/);
+test('parseResponse: no text block → failed', () => {
+  const outcome = parseResponse(200, JSON.stringify({ content: [], stop_reason: 'end_turn' }), []);
+  assert.ok(outcome.status === 'failed');
+  assert.match(outcome.reason, /text block/);
 });
 
-// --- enrichirDigest : cas sautés (jamais d'appel réseau) --------------------
+// --- enrichDigest: skipped cases (never a network call) ---------------------
 
-test('enrichirDigest sans clé API : saute sans appeler fetch', async () => {
+test('enrichDigest without API key: skips without calling fetch', async () => {
   const mock = makeMock();
-  const outcome = await enrichirDigest({ ...config, anthropicApiKey: null }, diffAvecUniques(5), {
+  const outcome = await enrichDigest({ ...config, anthropicApiKey: null }, diffWithUniques(5), {
     fetchFn: mock.fetchFn,
   });
-  assert.deepEqual(outcome, { statut: 'saute' });
+  assert.deepEqual(outcome, { status: 'skipped' });
   assert.equal(mock.calls.length, 0);
 });
 
-test('enrichirDigest au premier run : saute sans appeler fetch', async () => {
+test('enrichDigest on the first run: skips without calling fetch', async () => {
   const mock = makeMock();
-  const d = { ...diffAvecUniques(5), isFirstRun: true };
-  const outcome = await enrichirDigest(config, d, { fetchFn: mock.fetchFn });
-  assert.deepEqual(outcome, { statut: 'saute' });
+  const d = { ...diffWithUniques(5), isFirstRun: true };
+  const outcome = await enrichDigest(config, d, { fetchFn: mock.fetchFn });
+  assert.deepEqual(outcome, { status: 'skipped' });
   assert.equal(mock.calls.length, 0);
 });
 
-test('enrichirDigest sous 3 tweets UNIQUES : saute sans appeler fetch', async () => {
+test('enrichDigest under 3 UNIQUE tweets: skips without calling fetch', async () => {
   const mock = makeMock();
-  // 3 entrées brutes mais 2 uniques : l'id 2 est bookmarké ET liké.
+  // 3 raw entries but 2 unique: id 2 is bookmarked AND liked.
   const d = diff({
-    newBookmarks: [tweet('1', 'premier'), tweet('2', 'second')],
+    newBookmarks: [tweet('1', 'first'), tweet('2', 'second')],
     newLikes: [tweet('2', 'second')],
   });
-  const outcome = await enrichirDigest(config, d, { fetchFn: mock.fetchFn });
-  assert.deepEqual(outcome, { statut: 'saute' });
+  const outcome = await enrichDigest(config, d, { fetchFn: mock.fetchFn });
+  assert.deepEqual(outcome, { status: 'skipped' });
   assert.equal(mock.calls.length, 0);
 });
 
-// --- enrichirDigest : nominal ----------------------------------------------
+// --- enrichDigest: nominal -------------------------------------------------
 
-test('enrichirDigest nominal : résumé + picks résolus par index, requête conforme', async () => {
+test('enrichDigest nominal: summary + picks resolved by index, conforming request', async () => {
   const mock = makeMock([
-    reponseStructuree({
-      resume: 'Deux thèmes : agents IA et TypeScript.',
+    structuredResponse({
+      summary: 'Two themes: AI agents and TypeScript.',
       topPicks: [
-        { index: 2, raison: 'le plus dense' },
-        { index: 4, raison: 'tutoriel complet' },
+        { index: 2, reason: 'the densest' },
+        { index: 4, reason: 'complete tutorial' },
       ],
     }),
   ]);
-  const outcome = await enrichirDigest(config, diffAvecUniques(5), { fetchFn: mock.fetchFn });
+  const outcome = await enrichDigest(config, diffWithUniques(5), { fetchFn: mock.fetchFn });
 
-  assert.ok(outcome.statut === 'ok');
-  assert.equal(outcome.resume, 'Deux thèmes : agents IA et TypeScript.');
+  assert.ok(outcome.status === 'ok');
+  assert.equal(outcome.summary, 'Two themes: AI agents and TypeScript.');
   assert.equal(outcome.picks.length, 2);
-  // Résolution index→tweet côté client : l'URL vient du diff, pas du modèle.
+  // index→tweet resolution client-side: the URL comes from the diff, not the model.
   assert.equal(outcome.picks[0]?.tweet.id, '2');
   assert.equal(outcome.picks[0]?.tweet.url, 'https://x.com/alice/status/2');
-  assert.equal(outcome.picks[0]?.raison, 'le plus dense');
+  assert.equal(outcome.picks[0]?.reason, 'the densest');
   assert.equal(outcome.picks[1]?.tweet.id, '4');
 
-  assert.equal(mock.calls.length, 1); // un seul essai, jamais de retry
+  assert.equal(mock.calls.length, 1); // a single attempt, never a retry
   const call = mock.calls[0];
   assert.ok(call);
   assert.equal(call.url, 'https://api.anthropic.com/v1/messages');
@@ -206,8 +206,8 @@ test('enrichirDigest nominal : résumé + picks résolus par index, requête con
   assert.equal(call.headers['content-type'], 'application/json');
   assert.equal(call.payload.model, 'claude-opus-4-8');
   assert.equal(call.payload.max_tokens, 700);
-  assert.ok(call.payload.system.includes('DONNÉE')); // tweets = données, pas instructions
-  assert.ok(call.payload.system.includes('français'));
+  assert.ok(call.payload.system.includes('DATA')); // tweets = data, not instructions
+  assert.ok(call.payload.system.includes('English'));
   assert.equal(call.payload.messages.length, 1);
   assert.equal(call.payload.messages[0]?.role, 'user');
   assert.ok(call.payload.messages[0]?.content.includes('1. @alice'));
@@ -216,187 +216,187 @@ test('enrichirDigest nominal : résumé + picks résolus par index, requête con
   assert.equal(call.payload.output_config.format.schema.additionalProperties, false);
 });
 
-test('enrichirDigest n’envoie ni temperature, ni top_p, ni top_k, ni thinking', async () => {
-  const mock = makeMock([reponseStructuree({ resume: 'ok', topPicks: [] })]);
-  await enrichirDigest(config, diffAvecUniques(3), { fetchFn: mock.fetchFn });
+test('enrichDigest sends neither temperature, nor top_p, nor top_k, nor thinking', async () => {
+  const mock = makeMock([structuredResponse({ summary: 'ok', topPicks: [] })]);
+  await enrichDigest(config, diffWithUniques(3), { fetchFn: mock.fetchFn });
 
   const call = mock.calls[0];
   assert.ok(call);
-  const cles = Object.keys(call.payload);
-  for (const interdite of ['temperature', 'top_p', 'top_k', 'thinking']) {
-    assert.ok(!cles.includes(interdite), `paramètre interdit envoyé : ${interdite}`);
+  const keys = Object.keys(call.payload);
+  for (const forbidden of ['temperature', 'top_p', 'top_k', 'thinking']) {
+    assert.ok(!keys.includes(forbidden), `forbidden parameter sent: ${forbidden}`);
   }
 });
 
-test('enrichirDigest déduplique bookmark+like : une seule entrée marquée dans le prompt', async () => {
-  const mock = makeMock([reponseStructuree({ resume: 'ok', topPicks: [] })]);
+test('enrichDigest dedupes bookmark+like: a single marked entry in the prompt', async () => {
+  const mock = makeMock([structuredResponse({ summary: 'ok', topPicks: [] })]);
   const d = diff({
-    newBookmarks: [tweet('1', 'tweet numéro 1'), tweet('2', 'tweet numéro 2'), tweet('3', 'tweet numéro 3')],
-    newLikes: [tweet('2', 'tweet numéro 2')],
+    newBookmarks: [tweet('1', 'tweet number 1'), tweet('2', 'tweet number 2'), tweet('3', 'tweet number 3')],
+    newLikes: [tweet('2', 'tweet number 2')],
   });
-  const outcome = await enrichirDigest(config, d, { fetchFn: mock.fetchFn });
+  const outcome = await enrichDigest(config, d, { fetchFn: mock.fetchFn });
 
-  assert.equal(outcome.statut, 'ok'); // 3 uniques : le seuil est bien atteint
+  assert.equal(outcome.status, 'ok'); // 3 uniques: the threshold is indeed reached
   const prompt = mock.calls[0]?.payload.messages[0]?.content ?? '';
-  assert.equal(compterOccurrences(prompt, 'tweet numéro 2'), 1);
-  assert.equal(compterOccurrences(prompt, '(bookmarké + liké)'), 1);
-  assert.ok(prompt.includes('2. @alice (Alice & Co <3>) (bookmarké + liké)'));
+  assert.equal(countOccurrences(prompt, 'tweet number 2'), 1);
+  assert.equal(countOccurrences(prompt, '(bookmarked + liked)'), 1);
+  assert.ok(prompt.includes('2. @alice (Alice & Co <3>) (bookmarked + liked)'));
 });
 
-// --- enrichirDigest : échecs fail-open ---------------------------------------
+// --- enrichDigest: fail-open failures ----------------------------------------
 
-test('HTTP 529 → echec avec le statut et le corps dans la raison', async () => {
-  const surcharge = new Response(
+test('HTTP 529 → failed with the status and body in the reason', async () => {
+  const overloaded = new Response(
     JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }),
     { status: 529 },
   );
-  const mock = makeMock([surcharge]);
-  const outcome = await enrichirDigest(config, diffAvecUniques(3), { fetchFn: mock.fetchFn });
+  const mock = makeMock([overloaded]);
+  const outcome = await enrichDigest(config, diffWithUniques(3), { fetchFn: mock.fetchFn });
 
-  assert.ok(outcome.statut === 'echec');
-  assert.match(outcome.raison, /HTTP 529 — .*overloaded_error/);
-  assert.equal(mock.calls.length, 1); // pas de retry, même sur 529
+  assert.ok(outcome.status === 'failed');
+  assert.match(outcome.reason, /HTTP 529 — .*overloaded_error/);
+  assert.equal(mock.calls.length, 1); // no retry, even on 529
 });
 
-test('fetch qui rejette (timeout/abort) → echec, jamais de throw', async () => {
+test('fetch that rejects (timeout/abort) → failed, never a throw', async () => {
   const fetchFn: typeof fetch = async () => {
     throw new Error('The operation was aborted due to timeout');
   };
-  const outcome = await enrichirDigest(config, diffAvecUniques(3), { fetchFn });
-  assert.ok(outcome.statut === 'echec');
-  assert.match(outcome.raison, /timeout/);
+  const outcome = await enrichDigest(config, diffWithUniques(3), { fetchFn });
+  assert.ok(outcome.status === 'failed');
+  assert.match(outcome.reason, /timeout/);
 });
 
-test('stop_reason max_tokens (sortie coupée) → echec', async () => {
-  const mock = makeMock([reponseStructuree({ resume: 'tronqué', topPicks: [] }, 'max_tokens')]);
-  const outcome = await enrichirDigest(config, diffAvecUniques(3), { fetchFn: mock.fetchFn });
-  assert.ok(outcome.statut === 'echec');
-  assert.match(outcome.raison, /stop_reason inattendu : max_tokens/);
+test('stop_reason max_tokens (output cut off) → failed', async () => {
+  const mock = makeMock([structuredResponse({ summary: 'truncated', topPicks: [] }, 'max_tokens')]);
+  const outcome = await enrichDigest(config, diffWithUniques(3), { fetchFn: mock.fetchFn });
+  assert.ok(outcome.status === 'failed');
+  assert.match(outcome.reason, /unexpected stop_reason: max_tokens/);
 });
 
-test('stop_reason inconnu → echec (prédicat exhaustif)', async () => {
-  const mock = makeMock([reponseStructuree({ resume: 'ok', topPicks: [] }, 'pause_mysterieuse')]);
-  const outcome = await enrichirDigest(config, diffAvecUniques(3), { fetchFn: mock.fetchFn });
-  assert.ok(outcome.statut === 'echec');
-  assert.match(outcome.raison, /stop_reason inattendu : pause_mysterieuse/);
+test('unknown stop_reason → failed (exhaustive predicate)', async () => {
+  const mock = makeMock([structuredResponse({ summary: 'ok', topPicks: [] }, 'mysterious_pause')]);
+  const outcome = await enrichDigest(config, diffWithUniques(3), { fetchFn: mock.fetchFn });
+  assert.ok(outcome.status === 'failed');
+  assert.match(outcome.reason, /unexpected stop_reason: mysterious_pause/);
 });
 
-test('JSON de sortie partiel/invalide → echec', async () => {
-  const coupe = new Response(
+test('partial/invalid output JSON → failed', async () => {
+  const truncated = new Response(
     JSON.stringify({
-      content: [{ type: 'text', text: '{"resume": "coup' }],
+      content: [{ type: 'text', text: '{"summary": "cut' }],
       stop_reason: 'end_turn',
     }),
     { status: 200 },
   );
-  const mock = makeMock([coupe]);
-  const outcome = await enrichirDigest(config, diffAvecUniques(3), { fetchFn: mock.fetchFn });
-  assert.ok(outcome.statut === 'echec');
-  assert.match(outcome.raison, /JSON invalide/);
+  const mock = makeMock([truncated]);
+  const outcome = await enrichDigest(config, diffWithUniques(3), { fetchFn: mock.fetchFn });
+  assert.ok(outcome.status === 'failed');
+  assert.match(outcome.reason, /invalid JSON/);
 });
 
-test('résumé vide ou blanc → echec', async () => {
-  const mock = makeMock([reponseStructuree({ resume: '   ', topPicks: [{ index: 1, raison: 'x' }] })]);
-  const outcome = await enrichirDigest(config, diffAvecUniques(3), { fetchFn: mock.fetchFn });
-  assert.ok(outcome.statut === 'echec');
-  assert.match(outcome.raison, /résumé vide/);
+test('empty or blank summary → failed', async () => {
+  const mock = makeMock([structuredResponse({ summary: '   ', topPicks: [{ index: 1, reason: 'x' }] })]);
+  const outcome = await enrichDigest(config, diffWithUniques(3), { fetchFn: mock.fetchFn });
+  assert.ok(outcome.status === 'failed');
+  assert.match(outcome.reason, /empty summary/);
 });
 
-// --- plafonds appliqués dans le parser ---------------------------------------
+// --- caps applied in the parser ----------------------------------------------
 
-test('indices hors plage, non entiers ou dupliqués : picks ignorés', async () => {
+test('out-of-range, non-integer or duplicate indices: picks ignored', async () => {
   const mock = makeMock([
-    reponseStructuree({
-      resume: 'ok',
+    structuredResponse({
+      summary: 'ok',
       topPicks: [
-        { index: 0, raison: 'hors plage bas' },
-        { index: 99, raison: 'hors plage haut' },
-        { index: 2.5, raison: 'non entier' },
-        { index: 2, raison: 'valide' },
-        { index: 2, raison: 'dupliqué' },
+        { index: 0, reason: 'out of range low' },
+        { index: 99, reason: 'out of range high' },
+        { index: 2.5, reason: 'non-integer' },
+        { index: 2, reason: 'valid' },
+        { index: 2, reason: 'duplicate' },
       ],
     }),
   ]);
-  const outcome = await enrichirDigest(config, diffAvecUniques(5), { fetchFn: mock.fetchFn });
+  const outcome = await enrichDigest(config, diffWithUniques(5), { fetchFn: mock.fetchFn });
 
-  assert.ok(outcome.statut === 'ok');
+  assert.ok(outcome.status === 'ok');
   assert.equal(outcome.picks.length, 1);
   assert.equal(outcome.picks[0]?.tweet.id, '2');
-  assert.equal(outcome.picks[0]?.raison, 'valide');
+  assert.equal(outcome.picks[0]?.reason, 'valid');
 });
 
-test('aucun pick valide : ok quand même, bloc picks omis (liste vide)', async () => {
+test('no valid pick: ok anyway, picks block omitted (empty list)', async () => {
   const mock = makeMock([
-    reponseStructuree({ resume: 'résumé seul', topPicks: [{ index: 42, raison: 'perdu' }] }),
+    structuredResponse({ summary: 'summary only', topPicks: [{ index: 42, reason: 'lost' }] }),
   ]);
-  const outcome = await enrichirDigest(config, diffAvecUniques(3), { fetchFn: mock.fetchFn });
+  const outcome = await enrichDigest(config, diffWithUniques(3), { fetchFn: mock.fetchFn });
 
-  assert.ok(outcome.statut === 'ok');
-  assert.equal(outcome.resume, 'résumé seul');
+  assert.ok(outcome.status === 'ok');
+  assert.equal(outcome.summary, 'summary only');
   assert.deepEqual(outcome.picks, []);
 });
 
-test('plus de 3 picks valides : tronqué à 3, dans l’ordre du modèle', async () => {
+test('more than 3 valid picks: truncated to 3, in the model order', async () => {
   const mock = makeMock([
-    reponseStructuree({
-      resume: 'ok',
-      topPicks: [1, 2, 3, 4, 5].map((index) => ({ index, raison: `raison ${index}` })),
+    structuredResponse({
+      summary: 'ok',
+      topPicks: [1, 2, 3, 4, 5].map((index) => ({ index, reason: `reason ${index}` })),
     }),
   ]);
-  const outcome = await enrichirDigest(config, diffAvecUniques(5), { fetchFn: mock.fetchFn });
+  const outcome = await enrichDigest(config, diffWithUniques(5), { fetchFn: mock.fetchFn });
 
-  assert.ok(outcome.statut === 'ok');
+  assert.ok(outcome.status === 'ok');
   assert.deepEqual(
     outcome.picks.map((p) => p.tweet.id),
     ['1', '2', '3'],
   );
 });
 
-test('résumé et raisons plafonnés à ~600 et ~150 chars dans le parser', async () => {
+test('summary and reasons capped at ~600 and ~150 chars in the parser', async () => {
   const mock = makeMock([
-    reponseStructuree({
-      resume: 'r'.repeat(1000),
-      topPicks: [{ index: 1, raison: 'x'.repeat(400) }],
+    structuredResponse({
+      summary: 'r'.repeat(1000),
+      topPicks: [{ index: 1, reason: 'x'.repeat(400) }],
     }),
   ]);
-  const outcome = await enrichirDigest(config, diffAvecUniques(3), { fetchFn: mock.fetchFn });
+  const outcome = await enrichDigest(config, diffWithUniques(3), { fetchFn: mock.fetchFn });
 
-  assert.ok(outcome.statut === 'ok');
-  assert.equal(outcome.resume, 'r'.repeat(600) + '…');
-  assert.equal(outcome.picks[0]?.raison, 'x'.repeat(150) + '…');
+  assert.ok(outcome.status === 'ok');
+  assert.equal(outcome.summary, 'r'.repeat(600) + '…');
+  assert.equal(outcome.picks[0]?.reason, 'x'.repeat(150) + '…');
 });
 
-test('plafonds mesurés APRÈS échappement HTML : résumé/raison saturés de & raccourcis', async () => {
-  // '&' devient '&amp;' (5 chars) au rendu : mesurer le texte brut laisserait
-  // le récap échappé dépasser 4096 chars → deux messages notifiants.
+test('caps measured AFTER HTML escaping: summary/reason saturated with & shortened', async () => {
+  // '&' becomes '&amp;' (5 chars) on render: measuring the raw text would let
+  // the escaped recap exceed 4096 chars → two notifying messages.
   const mock = makeMock([
-    reponseStructuree({
-      resume: '&'.repeat(1000),
-      topPicks: [{ index: 1, raison: '&'.repeat(400) }],
+    structuredResponse({
+      summary: '&'.repeat(1000),
+      topPicks: [{ index: 1, reason: '&'.repeat(400) }],
     }),
   ]);
-  const outcome = await enrichirDigest(config, diffAvecUniques(3), { fetchFn: mock.fetchFn });
+  const outcome = await enrichDigest(config, diffWithUniques(3), { fetchFn: mock.fetchFn });
 
-  assert.ok(outcome.statut === 'ok');
-  assert.equal(outcome.resume, '&'.repeat(120) + '…'); // 120 × 5 = 600 chars échappés
-  assert.equal(escapeHtml(outcome.resume).length, 601); // plafond + marqueur, comme pour 'r'
-  assert.equal(outcome.picks[0]?.raison, '&'.repeat(30) + '…'); // 30 × 5 = 150 chars échappés
-  assert.equal(escapeHtml(outcome.picks[0]?.raison ?? '').length, 151);
+  assert.ok(outcome.status === 'ok');
+  assert.equal(outcome.summary, '&'.repeat(120) + '…'); // 120 × 5 = 600 escaped chars
+  assert.equal(escapeHtml(outcome.summary).length, 601); // cap + marker, as for 'r'
+  assert.equal(outcome.picks[0]?.reason, '&'.repeat(30) + '…'); // 30 × 5 = 150 escaped chars
+  assert.equal(escapeHtml(outcome.picks[0]?.reason ?? '').length, 151);
 });
 
-test('les URLs en clair du modèle sont défangées dans résumé et raisons', async () => {
-  // Telegram auto-linke toute URL en clair : sans défang, une injection de
-  // prompt placerait un lien de phishing cliquable dans le récap.
+test('plain-text URLs from the model are defanged in summary and reasons', async () => {
+  // Telegram auto-links any plain-text URL: without defang, a prompt injection
+  // would place a clickable phishing link in the recap.
   const mock = makeMock([
-    reponseStructuree({
-      resume: 'Va voir HTTPS://evil.example et http://phish.example pour la suite.',
-      topPicks: [{ index: 1, raison: 'détails sur https://evil.example/payload' }],
+    structuredResponse({
+      summary: 'Go see HTTPS://evil.example and http://phish.example for the rest.',
+      topPicks: [{ index: 1, reason: 'details at https://evil.example/payload' }],
     }),
   ]);
-  const outcome = await enrichirDigest(config, diffAvecUniques(3), { fetchFn: mock.fetchFn });
+  const outcome = await enrichDigest(config, diffWithUniques(3), { fetchFn: mock.fetchFn });
 
-  assert.ok(outcome.statut === 'ok');
-  assert.ok(!/https?:\/\//i.test(outcome.resume));
-  assert.equal(outcome.resume, 'Va voir hxxp://evil.example et hxxp://phish.example pour la suite.');
-  assert.equal(outcome.picks[0]?.raison, 'détails sur hxxp://evil.example/payload');
+  assert.ok(outcome.status === 'ok');
+  assert.ok(!/https?:\/\//i.test(outcome.summary));
+  assert.equal(outcome.summary, 'Go see hxxp://evil.example and hxxp://phish.example for the rest.');
+  assert.equal(outcome.picks[0]?.reason, 'details at hxxp://evil.example/payload');
 });

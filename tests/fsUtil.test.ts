@@ -1,4 +1,4 @@
-// Tests purs d'atomicWriteFile : uniquement dans un tmpdir node:os.
+// Pure tests for atomicWriteFile: only within a node:os tmpdir.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +11,7 @@ function tmpDir(): string {
   return mkdtempSync(path.join(os.tmpdir(), 'fsutil-test-'));
 }
 
-test('atomicWriteFile : écrit le contenu, mode 0600, aucun tmp résiduel', () => {
+test('atomicWriteFile: writes the content, mode 0600, no leftover tmp', () => {
   const dir = tmpDir();
   const filePath = path.join(dir, 'tokens.json');
 
@@ -22,7 +22,7 @@ test('atomicWriteFile : écrit le contenu, mode 0600, aucun tmp résiduel', () =
   assert.deepEqual(readdirSync(dir), ['tokens.json']);
 });
 
-test('atomicWriteFile : écrase atomiquement un fichier existant', () => {
+test('atomicWriteFile: atomically overwrites an existing file', () => {
   const dir = tmpDir();
   const filePath = path.join(dir, 'state.json');
 
@@ -33,13 +33,13 @@ test('atomicWriteFile : écrase atomiquement un fichier existant', () => {
   assert.deepEqual(readdirSync(dir), ['state.json']);
 });
 
-test('atomicWriteFile : échec du rename → throw et tmp supprimé (pas de secret orphelin)', () => {
+test('atomicWriteFile: rename failure → throws and tmp removed (no orphaned secret)', () => {
   const dir = tmpDir();
-  // cible occupée par un répertoire NON VIDE : renameSync échoue sûrement
+  // target occupied by a NON-EMPTY directory: renameSync is sure to fail
   const target = path.join(dir, 'tokens.json');
   mkdirSync(path.join(target, 'occupe'), { recursive: true });
 
   assert.throws(() => atomicWriteFile(target, 'secret'));
-  // seul le répertoire-cible subsiste : aucun tokens.json.tmp-<pid> orphelin
+  // only the target directory remains: no orphaned tokens.json.tmp-<pid>
   assert.deepEqual(readdirSync(dir), ['tokens.json']);
 });
