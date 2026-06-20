@@ -15,6 +15,12 @@ export interface Config {
    * adaptée à l'environnement : « relance `npm run auth` » en local,
    * lien /auth?k=… sur le Worker (SPIKE-HOSTING.md §3.2) */
   reauthHint: string;
+  /** clé API Anthropic, OPTIONNELLE : null = résumé IA du digest désactivé,
+   * le bot se comporte exactement comme avant (PLAN-IA-DIGEST.md §3) */
+  anthropicApiKey: string | null;
+  /** modèle Claude du résumé (défaut claude-opus-4-8, 5 $/25 $ par MTok),
+   * jamais substitué en silence — sonnet/haiku moins chers via ANTHROPIC_MODEL */
+  anthropicModel: string;
 }
 
 export interface Tweet {

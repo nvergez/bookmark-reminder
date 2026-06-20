@@ -31,6 +31,9 @@ export interface Env {
   /** Secret d'accès aux routes /auth, /run et /admin/*
    * (?k=… ou en-tête Authorization: Bearer). */
   AUTH_URL_KEY: string;
+  /** OPTIONNEL : active le résumé IA du digest (PLAN-IA-DIGEST.md §3) —
+   * absent = bot inchangé. `wrangler secret put ANTHROPIC_API_KEY` */
+  ANTHROPIC_API_KEY?: string;
   // Vars (wrangler.jsonc)
   /** URL publique du Worker, pour le lien de re-auth dans les alertes. */
   BASE_URL?: string;
@@ -38,6 +41,8 @@ export interface Env {
   DIGEST_PARIS_TIME?: string;
   MAX_RESULTS?: string;
   TWEET_LINK_DOMAIN?: string;
+  /** Modèle Claude du résumé IA (défaut claude-opus-4-8). */
+  ANTHROPIC_MODEL?: string;
   /** « on » pendant la bascule local→cloud uniquement (import/export des
    * tokens) ; repasser à « off » + redéployer une fois la bascule faite. */
   ADMIN_API?: string;
@@ -73,6 +78,9 @@ function buildConfig(env: Env): Config {
     maxResults: parseMaxResults(env.MAX_RESULTS),
     tweetLinkDomain: env.TWEET_LINK_DOMAIN || 'x.com',
     reauthHint,
+    // OPTIONNEL (hors check required) : absent = résumé IA off, bot inchangé.
+    anthropicApiKey: env.ANTHROPIC_API_KEY || null,
+    anthropicModel: env.ANTHROPIC_MODEL || 'claude-opus-4-8',
   };
 }
 

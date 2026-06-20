@@ -108,10 +108,56 @@ Cron : deux triggers UTC (`30 6` et `30 7`) encadrent le changement d'heure ;
 la garde `src/schedule.ts` ne laisse passer que celui qui tombe à
 `DIGEST_PARIS_TIME` (08:30 Europe/Paris par défaut).
 
+**Limite préexistante de sous-requêtes** : le free plan autorise 50
+sous-requêtes externes par invocation. Au pire cas `MAX_RESULTS=25`
+(50 items), les envois Telegram par tweet dépassent déjà ce plafond
+(~54 appels) — levier si ça arrive un jour : baisser `MAX_RESULTS`.
+L'appel Claude du résumé IA (section suivante) n'en ajoute qu'**un seul**.
+
 **Re-auth depuis n'importe quel navigateur** (téléphone compris) : ouvrir
 `https://<worker>.workers.dev/auth?k=<AUTH_URL_KEY>` — les alertes Telegram
 d'échec embarquent directement ce lien. Rollback cloud→local : voir la
 sortie de `migrate-to-cloud.sh` (export symétrique tokens + state).
+
+## Résumé IA du récap (optionnel)
+
+Avec une clé API Anthropic, le message récap du matin — le seul qui notifie —
+gagne un résumé thématique (2-4 lignes) et un bloc « ⭐ À lire en premier »
+de 1 à 3 picks, produits par **un seul appel Claude par jour**. Conception et
+arbitrages : [PLAN-IA-DIGEST.md](./PLAN-IA-DIGEST.md). Sans clé, le bot est
+strictement inchangé.
+
+La clé se pose **dans chaque environnement où le bot tourne** :
+
+- **Local** : `ANTHROPIC_API_KEY=sk-ant-…` dans `.env`.
+- **Worker** : `npx wrangler secret put ANTHROPIC_API_KEY`.
+
+⚠️ **Piège du secret en double** : si un seul des deux environnements a la
+clé, les deux runtimes divergent **en silence** — celui sans clé saute
+simplement le résumé (statut « sauté », pas « échec »), et la ligne
+d'indisponibilité ne s'affiche que sur un échec d'appel. Lors d'une bascule
+local ↔ cloud, poser la clé des deux côtés (ou d'aucun).
+
+### Choix du modèle
+
+`ANTHROPIC_MODEL` (`.env` en local, `vars` de `wrangler.jsonc` sur le Worker)
+choisit le modèle — défaut `claude-opus-4-8`, jamais substitué en silence :
+
+| Modèle | Input/Output ($/MTok) | Mois type estimé |
+|---|---|---|
+| `claude-opus-4-8` (défaut) | 5 / 25 | ~0,40–0,55 $ |
+| `claude-sonnet-4-6` | 3 / 15 | ~0,30 $ |
+| `claude-haiku-4-5` | 1 / 5 | ~0,10 $ |
+
+### Fail-open strict
+
+- **Échec Claude** (panne, clé révoquée, timeout…) : le digest part
+  normalement, avec la ligne « *🤖 résumé IA indisponible ce matin* » — jamais
+  de digest supprimé, jamais de retry. La cause exacte est dans la console
+  locale (ou `npm run worker:tail` côté Worker).
+- **Jours à moins de 3 tweets uniques** (et premier run) : appel sauté sans
+  réseau — 0 $, le récap brut se suffit, et aucune ligne d'indisponibilité
+  (un jour sauté n'est pas un échec).
 
 ## Licence
 

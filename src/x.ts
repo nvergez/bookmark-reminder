@@ -18,6 +18,9 @@ interface RawTweet {
   text: string;
   author_id?: string;
   created_at?: string;
+  // Posts longs (> 280 chars) : `text` est tronqué par l'API, le texte complet
+  // arrive dans `note_tweet.text` quand le champ est demandé via tweet.fields.
+  note_tweet?: { text: string };
 }
 
 function isRawTweet(value: unknown): value is RawTweet {
@@ -25,6 +28,11 @@ function isRawTweet(value: unknown): value is RawTweet {
   if (typeof value.id !== 'string' || typeof value.text !== 'string') return false;
   if (value.author_id !== undefined && typeof value.author_id !== 'string') return false;
   if (value.created_at !== undefined && typeof value.created_at !== 'string') return false;
+  if (value.note_tweet !== undefined) {
+    // Absent = post court (forme normale) ; présent = objet avec text:string,
+    // toute autre forme invalide le tweet entier.
+    if (!isRecord(value.note_tweet) || typeof value.note_tweet.text !== 'string') return false;
+  }
   return true;
 }
 
@@ -103,7 +111,9 @@ export function mapTweets(payload: unknown, tweetLinkDomain: string): Tweet[] {
     const authorUsername = author?.username ?? 'i';
     return {
       id: raw.id,
-      text: decodeApiEntities(raw.text),
+      // Posts longs : note_tweet.text porte le texte complet, text n'en est
+      // que le début tronqué (~280 chars).
+      text: decodeApiEntities(raw.note_tweet?.text ?? raw.text),
       authorUsername,
       authorName: author !== undefined ? decodeApiEntities(author.name) : 'Inconnu',
       createdAt: raw.created_at ?? '',
@@ -121,7 +131,7 @@ async function fetchTimeline(
 ): Promise<Tweet[]> {
   const url = new URL(`${API_BASE}/users/${userId}/${endpoint}`);
   url.searchParams.set('max_results', String(config.maxResults));
-  url.searchParams.set('tweet.fields', 'created_at,author_id');
+  url.searchParams.set('tweet.fields', 'created_at,author_id,note_tweet');
   url.searchParams.set('expansions', 'author_id');
   url.searchParams.set('user.fields', 'username,name');
 

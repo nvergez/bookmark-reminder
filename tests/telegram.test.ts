@@ -2,6 +2,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { parseReponse } from '../src/ai.ts';
+import type { AiOutcome } from '../src/ai.ts';
 import { chunkMessage, escapeHtml, sendDigest, sendErrorAlert } from '../src/telegram.ts';
 import type { Config, DigestDiff, Tweet } from '../src/types.ts';
 
@@ -13,6 +15,8 @@ const config: Config = {
   maxResults: 25,
   tweetLinkDomain: 'x.com',
   reauthHint: 'relance `npm run auth`',
+  anthropicApiKey: null,
+  anthropicModel: 'claude-opus-4-8',
 };
 
 interface SentPayload {
@@ -109,7 +113,7 @@ test('sendDigest envoie un récap notifiant puis un item silencieux par tweet', 
     newBookmarks: [tweet('1', 'premier bookmark'), tweet('2', 'second bookmark')],
     newLikes: [tweet('3', 'un like')],
   });
-  await sendDigest(config, d, { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn });
+  await sendDigest(config, d, { statut: 'saute' }, { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn });
 
   assert.equal(mock.calls.length, 4);
   const recap = mock.calls[0];
@@ -151,7 +155,7 @@ test('sendDigest premier run : un seul message silencieux de référence', async
     isFirstRun: true,
     trackedCounts: { bookmarks: 2, likes: 1 },
   });
-  await sendDigest(config, d, { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn });
+  await sendDigest(config, d, { statut: 'saute' }, { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn });
 
   assert.equal(mock.calls.length, 1);
   const call = mock.calls[0];
@@ -166,7 +170,7 @@ test('sendDigest premier run : un seul message silencieux de référence', async
 
 test('sendDigest sans nouveautés : un seul « Rien de nouveau ✨ » silencieux', async () => {
   const mock = makeMock();
-  await sendDigest(config, diff({}), { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn });
+  await sendDigest(config, diff({}), { statut: 'saute' }, { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn });
 
   assert.equal(mock.calls.length, 1);
   const call = mock.calls[0];
@@ -174,6 +178,130 @@ test('sendDigest sans nouveautés : un seul « Rien de nouveau ✨ » silencieux
   assert.equal(call.payload.text, 'Rien de nouveau ✨');
   assert.equal(call.payload.disable_notification, true);
   assert.deepEqual(call.payload.link_preview_options, { is_disabled: true });
+});
+
+// --- sendDigest : récap enrichi par l'IA -----------------------------------
+
+const LIGNE_INDISPONIBLE = '<i>🤖 résumé IA indisponible ce matin</i>';
+
+test('récap enrichi à taille maximale : un seul chunk, silent: false exactement une fois', async () => {
+  const mock = makeMock();
+  const d = diff({
+    newBookmarks: [tweet('1', 'premier bookmark'), tweet('2', 'second bookmark')],
+    newLikes: [tweet('3', 'un like')],
+  });
+  // Pire cas RÉEL en sortie de parseReponse (et non un outcome fabriqué) :
+  // résumé et raisons saturés de '&', qui quintuple au rendu ('&amp;'). Des
+  // plafonds mesurés sur le texte brut donneraient ici un récap échappé
+  // > 4096 chars → découpé en DEUX messages notifiants.
+  const corpsModele = JSON.stringify({
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          resume: '&'.repeat(1000),
+          topPicks: [
+            { index: 1, raison: '&'.repeat(400) },
+            { index: 2, raison: '&'.repeat(400) },
+            { index: 3, raison: '&'.repeat(400) },
+          ],
+        }),
+      },
+    ],
+    stop_reason: 'end_turn',
+  });
+  const aiOutcome: AiOutcome = parseReponse(
+    200,
+    corpsModele,
+    [...d.newBookmarks, ...d.newLikes].map((t) => ({ tweet: t, bookmarkEtLike: false })),
+  );
+  assert.ok(aiOutcome.statut === 'ok');
+  assert.equal(aiOutcome.picks.length, 3);
+  await sendDigest(config, d, aiOutcome, { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn });
+
+  // 1 récap + 3 items : le récap n'a PAS été découpé par chunkMessage
+  assert.equal(mock.calls.length, 4);
+  const recap = mock.calls[0];
+  assert.ok(recap);
+  assert.equal(chunkMessage(recap.payload.text).length, 1);
+  assert.ok(recap.payload.text.length <= 4096); // texte RENDU (échappé) sous la limite Telegram
+  // Compteurs D'ABORD : l'aperçu de notification reste utile
+  assert.ok(recap.payload.text.startsWith('☀️ Ce matin : 2 nouveaux bookmarks 🔖, 1 nouveau like ❤️'));
+  assert.ok(recap.payload.text.includes('\n\n🧠 ' + '&amp;'.repeat(120) + '…'));
+  assert.ok(recap.payload.text.includes('\n\n⭐ À lire en premier :'));
+  assert.ok(recap.payload.text.includes('\n• <b>@alice</b> — ' + '&amp;'.repeat(30) + '…\nhttps://x.com/alice/status/1'));
+  assert.ok(recap.payload.text.includes('\nhttps://x.com/alice/status/3'));
+  assert.ok(!recap.payload.text.includes(LIGNE_INDISPONIBLE)); // jamais sur 'ok'
+  // link_preview_options reste désactivé sur le récap
+  assert.deepEqual(recap.payload.link_preview_options, { is_disabled: true });
+  // silent: false exactement une fois (le récap) ; les items restent silencieux
+  const notifiants = mock.calls.filter((call) => !call.payload.disable_notification);
+  assert.equal(notifiants.length, 1);
+  assert.equal(notifiants[0], recap);
+});
+
+test('ligne d’indisponibilité rendue UNIQUEMENT quand le statut est echec', async () => {
+  const d = diff({ newBookmarks: [tweet('1', 'premier bookmark')] });
+
+  const surEchec = makeMock();
+  await sendDigest(config, d, { statut: 'echec', raison: 'HTTP 401 — clé révoquée' }, {
+    fetchFn: surEchec.fetchFn,
+    sleepFn: surEchec.sleepFn,
+  });
+  const recapEchec = surEchec.calls[0]?.payload.text ?? '';
+  assert.ok(recapEchec.startsWith('☀️ Ce matin : ')); // compteurs toujours d'abord
+  assert.ok(recapEchec.endsWith(`\n\n${LIGNE_INDISPONIBLE}`));
+  assert.ok(!recapEchec.includes('HTTP 401')); // la raison reste en console, pas dans Telegram
+
+  const surSaute = makeMock();
+  await sendDigest(config, d, { statut: 'saute' }, { fetchFn: surSaute.fetchFn, sleepFn: surSaute.sleepFn });
+  assert.ok(!(surSaute.calls[0]?.payload.text ?? '').includes(LIGNE_INDISPONIBLE));
+
+  const surOk = makeMock();
+  await sendDigest(config, d, { statut: 'ok', resume: 'résumé du jour', picks: [] }, {
+    fetchFn: surOk.fetchFn,
+    sleepFn: surOk.sleepFn,
+  });
+  assert.ok(!(surOk.calls[0]?.payload.text ?? '').includes(LIGNE_INDISPONIBLE));
+});
+
+test('récap enrichi : auteur, raison et résumé passent par escapeHtml', async () => {
+  const mock = makeMock();
+  const piege: Tweet = { ...tweet('1', 'premier bookmark'), authorUsername: 'eve<&>' };
+  const aiOutcome: AiOutcome = {
+    statut: 'ok',
+    resume: 'résumé <fin> & co',
+    picks: [{ tweet: piege, raison: 'à <lire> & relire' }],
+  };
+  await sendDigest(config, diff({ newBookmarks: [piege] }), aiOutcome, {
+    fetchFn: mock.fetchFn,
+    sleepFn: mock.sleepFn,
+  });
+
+  const recap = mock.calls[0]?.payload.text ?? '';
+  assert.ok(recap.includes('\n\n🧠 résumé &lt;fin&gt; &amp; co'));
+  // Le <b> s'ouvre et se ferme sur la même ligne, autour de l'auteur échappé
+  assert.ok(recap.includes('\n• <b>@eve&lt;&amp;&gt;</b> — à &lt;lire&gt; &amp; relire\nhttps://x.com/alice/status/1'));
+  assert.ok(!recap.includes('@eve<&>')); // jamais de HTML brut issu des données
+});
+
+test('digest octet-identique à aujourd’hui quand le statut est saute', async () => {
+  const d = diff({
+    newBookmarks: [tweet('1', 'premier bookmark')],
+    newLikes: [tweet('2', 'un like')],
+  });
+  const surSaute = makeMock();
+  await sendDigest(config, d, { statut: 'saute' }, { fetchFn: surSaute.fetchFn, sleepFn: surSaute.sleepFn });
+  // Récap strictement identique à la chaîne actuelle : rien d'ajouté
+  assert.equal(surSaute.calls[0]?.payload.text, '☀️ Ce matin : 1 nouveau bookmark 🔖, 1 nouveau like ❤️');
+
+  // L'appel à deux arguments (compat) rend exactement les mêmes payloads
+  const parDefaut = makeMock();
+  await sendDigest(config, d, undefined, { fetchFn: parDefaut.fetchFn, sleepFn: parDefaut.sleepFn });
+  assert.deepEqual(
+    parDefaut.calls.map((call) => call.payload),
+    surSaute.calls.map((call) => call.payload),
+  );
 });
 
 // --- 429 → retry ----------------------------------------------------------
@@ -184,7 +312,7 @@ test('HTTP 429 : attend parameters.retry_after puis réessaie une fois', async (
     { status: 429 },
   );
   const mock = makeMock([tooMany, telegramOk()]);
-  await sendDigest(config, diff({}), { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn });
+  await sendDigest(config, diff({}), { statut: 'saute' }, { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn });
 
   assert.equal(mock.calls.length, 2);
   const firstTry = mock.calls[0];
@@ -202,7 +330,7 @@ test('non-2xx hors 429 : throw avec la description du body', async () => {
   );
   const mock = makeMock([forbidden]);
   await assert.rejects(
-    sendDigest(config, diff({}), { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn }),
+    sendDigest(config, diff({}), { statut: 'saute' }, { fetchFn: mock.fetchFn, sleepFn: mock.sleepFn }),
     /403.*bot was blocked/s,
   );
 });

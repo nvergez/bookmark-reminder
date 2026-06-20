@@ -117,6 +117,54 @@ test('mapTweets : décode les entités HTML renvoyées par l’API (text et name
   assert.equal(tweets[0]?.authorName, 'Bell & Labs');
 });
 
+test('mapTweets : note_tweet présent → texte complet utilisé (et décodé)', () => {
+  const payload = {
+    data: [
+      {
+        id: '1810000000000000001',
+        text: 'Début du post long, tronqué par l’API… https://t.co/abc123',
+        note_tweet: {
+          text: 'Début du post long, tronqué par l’API, puis toute la suite au-delà des 280 caractères — R&amp;D &lt;3 incluse.',
+        },
+        author_id: '44196397',
+        created_at: '2026-06-11T08:00:00.000Z',
+      },
+    ],
+    includes: { users: [{ id: '44196397', name: 'Elon Musk', username: 'elonmusk' }] },
+    meta: { result_count: 1 },
+  };
+  const tweets = mapTweets(payload, 'x.com');
+  // Le texte complet remplace le `text` tronqué, entités décodées comme pour text.
+  assert.equal(
+    tweets[0]?.text,
+    'Début du post long, tronqué par l’API, puis toute la suite au-delà des 280 caractères — R&D <3 incluse.',
+  );
+});
+
+test('mapTweets : note_tweet absent → text utilisé tel quel (comportement inchangé)', () => {
+  const tweets = mapTweets(fullPayload, 'x.com');
+  assert.equal(tweets[0]?.text, 'Ship it. 🚀');
+  assert.equal(
+    tweets[1]?.text,
+    'TypeScript 6.0 beta is out — native type stripping everywhere.',
+  );
+});
+
+test('mapTweets : note_tweet de forme invalide → tweet rejeté', () => {
+  assert.throws(
+    () => mapTweets({ data: [{ id: '1', text: 'ok', note_tweet: 'pas un objet' }] }, 'x.com'),
+    /tweet invalide/,
+  );
+  assert.throws(
+    () => mapTweets({ data: [{ id: '1', text: 'ok', note_tweet: { text: 42 } }] }, 'x.com'),
+    /tweet invalide/,
+  );
+  assert.throws(
+    () => mapTweets({ data: [{ id: '1', text: 'ok', note_tweet: {} }] }, 'x.com'),
+    /tweet invalide/,
+  );
+});
+
 test('mapTweets : domaine custom fixupx.com', () => {
   const tweets = mapTweets(fullPayload, 'fixupx.com');
   assert.equal(tweets[0]?.url, 'https://fixupx.com/elonmusk/status/1801234567890123456');
